@@ -1,0 +1,42 @@
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Personal application history (tracker state)
+data/
+*.tracker.json
+
+# Resume PDFs and personal documents
+*.pdf
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build / cache
+dist/
+build/
+.next/
+.cache/
+coverage/
+.nyc_output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local test artifacts
+*.local.json
+
+# Stale cowork setup notes (superseded by README.md)
+COWORK_SETUP.md

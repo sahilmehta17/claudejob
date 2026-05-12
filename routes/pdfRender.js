@@ -41,6 +41,33 @@ const R = {
   SEPARATOR: '_'.repeat(97),
 };
 
+// Predict the rendered wrap of a string in body font at the given size/width
+// and return the last line. Used to detect widow lines (final line < 4 words)
+// without re-running the full render path. Font is forced to Times-Roman so
+// the measurement matches drawBullet's _wrap exactly regardless of caller state.
+function predictLastLine(doc, text, fontSize, maxWidth) {
+  doc.font(R.FONT_NORMAL).fontSize(fontSize);
+  const words = String(text).split(/\s+/).filter(Boolean);
+  let currentLine = '';
+  let lastLine = '';
+  for (const word of words) {
+    const trial = currentLine ? `${currentLine} ${word}` : word;
+    const trialWidth = doc.widthOfString(trial);
+    if (trialWidth <= maxWidth) {
+      currentLine = trial;
+    } else {
+      lastLine = currentLine;
+      currentLine = word;
+    }
+  }
+  lastLine = currentLine;
+  return lastLine;
+}
+
+function isWidow(lastLine) {
+  return lastLine.split(/\s+/).filter(Boolean).length < 4;
+}
+
 class ResumeWriter {
   constructor(outPath) {
     this.outPath = outPath;
@@ -208,6 +235,12 @@ class ResumeWriter {
 
   drawBullet(text) {
     const maxW = R.PAGE_W - R.MARGIN_R - R.BULLET_TEXT_X;
+    const lastLine = predictLastLine(this.doc, text, R.BODY_SIZE, maxW);
+    if (isWidow(lastLine)) {
+      const wc = lastLine.split(/\s+/).filter(Boolean).length;
+      console.warn(`[pdfRender] widow detected: bullet ends with "${lastLine}" (${wc} words on last line)`);
+      console.warn(`[pdfRender] full bullet: ${String(text).slice(0, 100)}...`);
+    }
     const lines = this._wrap(text, R.FONT_NORMAL, R.BODY_SIZE, maxW);
     for (let i = 0; i < lines.length; i++) {
       this._checkBreak(R.LINE_H);

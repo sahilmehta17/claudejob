@@ -23,7 +23,7 @@ const PROFILE = {
   email: 'sahilmehta0204@gmail.com',
   phone: process.env.RESUME_PHONE || '[phone available on request]',
   location: 'New York City, NY',
-  linkedin: 'https://linkedin.com/in/sahilmehta',
+  linkedin: 'https://www.linkedin.com/in/sahil-mehta-87357b1b9/',
   github: 'https://github.com/sahilmehta',
   school: 'University of Wisconsin, Madison',
   degree: 'B.S. Computer Science & Data Science',

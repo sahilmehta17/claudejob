@@ -44,7 +44,7 @@ const RESUME_BASE_JSON = {
     PHONE,
     { text: 'sahilmehta.dev', url: 'https://sahilmehta.dev' },
     { text: 'Github', url: 'https://github.com/sahilmehta17' },
-    { text: 'Linkedin', url: 'https://linkedin.com/in/sahilmehta' },
+    { text: 'Linkedin', url: 'https://www.linkedin.com/in/sahil-mehta-87357b1b9/' },
   ],
   // Summary removed — every fact in it appeared elsewhere on the resume
   // within ~3 lines. The work speaks; the cover letter (per-JD via ClaudeJob)

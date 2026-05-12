@@ -44,10 +44,14 @@ const R = {
 class ResumeWriter {
   constructor(outPath) {
     this.outPath = outPath;
+    // bufferPages: true keeps every page in _pageBuffer until doc.end() flushes
+    // it. Without this, pdfkit flushes each page on addPage() and
+    // bufferedPageRange() always reports count: 1, defeating the overflow guard.
     this.doc = new PDFDocument({
       size: [R.PAGE_W, R.PAGE_H],
       margins: { top: 0, bottom: 0, left: 0, right: 0 },
       autoFirstPage: true,
+      bufferPages: true,
     });
     this.stream = fs.createWriteStream(outPath);
     this.doc.pipe(this.stream);
@@ -266,6 +270,19 @@ class ResumeWriter {
   }
 
   finish() {
+    // Hard guard: tailored resume MUST be 1 page. The LLM-side constraint in
+    // ai.js asks for this but doesn't enforce it; this is the safety net.
+    const pageRange = this.doc.bufferedPageRange();
+    if (pageRange.count > 1) {
+      this.doc.destroy?.();
+      this.stream.destroy();
+      try { fs.unlinkSync(this.outPath); } catch (_) {}
+      throw new Error(
+        `Resume overflow: tailored output rendered to ${pageRange.count} pages. ` +
+        `LLM-side layout constraint failed. Either retry tailoring with stricter ` +
+        `brevity guidance, or fall back to RESUME_BASE_JSON.`
+      );
+    }
     return new Promise((resolve, reject) => {
       this.doc.end();
       this.stream.on('finish', () => resolve(this.outPath));

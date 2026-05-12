@@ -14,11 +14,12 @@ const JSEARCH_BASE = `https://${JSEARCH_HOST}/search`;
  * We append "junior OR entry level OR new grad" to bias toward early-career roles.
  */
 const ROLE_QUERIES = {
-  'AI Engineer':       'AI engineer OR machine learning engineer',
-  'Software Engineer': 'software engineer',
-  'Data Engineer':     'data engineer',
-  'Data Scientist':    'data scientist',
-  'ML Engineer':       'machine learning engineer OR ML engineer',
+  'AI Engineer':                'AI engineer OR machine learning engineer',
+  'Forward Deployed Engineer':  'forward deployed engineer OR FDE OR applied engineer',
+  'Software Engineer':          'software engineer',
+  'Data Engineer':              'data engineer',
+  'Data Scientist':             'data scientist',
+  'ML Engineer':                'machine learning engineer OR ML engineer',
 };
 
 /**

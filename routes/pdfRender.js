@@ -366,8 +366,14 @@ async function renderCoverPdf(content, outPath) {
   y += 18;
 
   // Contact line.
+  // Items can be plain strings or { text, url } objects (the resume PDF
+  // renders the latter as clickable links via drawContact). The cover letter
+  // only shows visible text, so flatten both shapes to strings.
   doc.font(C.FONT_NORMAL).fontSize(C.CONTACT_SIZE);
-  const contact = (content.contact || []).join(' | ');
+  const contactStrs = (content.contact || []).map(c =>
+    typeof c === 'string' ? c : (c && c.text) || ''
+  ).filter(Boolean);
+  const contact = contactStrs.join(' | ');
   const contactW = doc.widthOfString(contact);
   doc.text(contact, (C.PAGE_W - contactW) / 2, y - C.CONTACT_SIZE * 0.85, { lineBreak: false });
   y += 10;

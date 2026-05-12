@@ -163,6 +163,9 @@ function normalizeJob(j) {
   })();
 
   const expMonths = j.job_required_experience?.required_experience_in_months ?? null;
+  // Parse the FULL description (not the 1000-char truncation) so we don't miss
+  // "X+ years" requirements that appear past the truncation point.
+  const requiredYears = maxYearsInDesc(j.job_description);
 
   return {
     id: j.job_id,
@@ -172,6 +175,7 @@ function normalizeJob(j) {
     type: j.job_is_remote ? 'Remote' : 'On-site',
     exp: expMonths != null ? formatExpRange(expMonths) : '—',
     expMonths,
+    requiredYears,
     salary: salaryAnnual,
     url: j.job_apply_link || j.job_google_link || '',
     applyUrl: j.job_apply_link || '',
@@ -213,6 +217,21 @@ function formatTimeAgo(hours) {
 // a junior/mid experience cap — JSearch's expMonths field is null on most
 // senior listings, so title detection is the reliable signal.
 const SENIOR_TITLE = /\b(senior|sr\.?|staff|principal|lead|distinguished|director|head\s+of|vp|chief)\b/i;
+
+// Extract the largest "N years" mention from a JD body — the third filter
+// signal alongside expMonths and title. Catches cases like "Forward Deployed
+// AI Strategist" where the title isn't senior-keyworded but the description
+// requires "12+ years". Caps at 50 to avoid weird matches like phone numbers
+// followed by "years" in dates.
+function maxYearsInDesc(desc) {
+  if (!desc) return null;
+  let max = 0;
+  for (const m of desc.matchAll(/(\d+)\s*\+?\s*years?\b/gi)) {
+    const v = parseInt(m[1], 10);
+    if (v > 0 && v < 50) max = Math.max(max, v);
+  }
+  return max > 0 ? max : null;
+}
 
 /**
  * Extract recognizable tech keywords from a string of text.
@@ -351,9 +370,15 @@ async function fetchFromJSearch(query, location, datePeriod, remoteOnly, opts = 
       return null;
     })();
     if (expCapMonths != null) {
+      const expCapYears = expCapMonths / 12;
       filtered = filtered.filter(j => {
         if (SENIOR_TITLE.test(j.title)) return false;
-        return j.expMonths == null || j.expMonths <= expCapMonths;
+        if (j.expMonths != null && j.expMonths > expCapMonths) return false;
+        // JD-body years parser — catches cases where the title is mid-level
+        // sounding but the description demands seniority (e.g. "12+ years").
+        // Allow a 1-year grace so "4 years" doesn't filter a 0-3-year cap.
+        if (j.requiredYears != null && j.requiredYears > expCapYears + 1) return false;
+        return true;
       });
     }
 

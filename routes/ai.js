@@ -413,8 +413,10 @@ Return this JSON (no markdown fences, no commentary):
 
     const coverPrompt = `Write a cover letter for Sahil Mehta applying to ${job.title} at ${job.company}.
 
+Current date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
+
 CANDIDATE (use ONLY these facts — do not invent):
-- CS + Data Science grad, UW-Madison, May 2025
+- B.S. Computer Science + B.S. Data Science, UW-Madison (graduated May 2025; ~1 year full-time experience since)
 - ~1 year full-time SWE at Enidus USA LLC: Node.js BFF for T-Mobile carrier APIs with OAuth/PoP auth; governed multi-tenant reporting system with RBAC; production RAG AI chatbot (FastAPI, GPT-4o-mini, Qdrant) with 3-layer security model
 - RAG capstone: 22K+ docs, 300K+ embeddings, 73% QA accuracy, 40% latency reduction
 - Orahi internship: dynamic route algo (80% manual effort reduction), Flask REST APIs

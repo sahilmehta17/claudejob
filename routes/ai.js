@@ -1,7 +1,7 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const router = express.Router();
-const { RESUME_BASE_JSON, renderResumeText, applyAdjacency } = require('./resumeContent');
+const { RESUME_BASE_JSON, CANDIDATE_FACTS, renderResumeText, applyAdjacency } = require('./resumeContent');
 const { saveApplicationBundle } = require('./saveBundle');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -212,6 +212,8 @@ function safeParseJSON(raw) {
 function buildResumePrompt(job, emphasis) {
   return `You are tailoring a resume for a specific job. Your ONLY job is conservative editing — NOT rewriting.
 
+You are tailoring a 1-page resume. Layout discipline matters as much as content relevance.
+
 TARGET ROLE: ${job.title} at ${job.company}
 REQUIRED SKILLS: ${job.tags.join(', ')}
 JD: ${job.desc}
@@ -247,6 +249,14 @@ STRICT RULES — violations will cause rejection:
    - Pretend the candidate has experience they don't have
    - Add a summary/objective section
    - Change the format, section headers, or structure
+
+LAYOUT CONSTRAINTS (hard requirements — output is rejected if violated):
+- The tailored resume MUST fit on exactly 1 page (A4, 17pt margins, Times-Roman 11pt, 13pt line height). Total bullet character count across all sections combined should not exceed ~3200 characters.
+- Each bullet must be between 18 and 32 words. Shorter bullets are fine; longer bullets are rejected.
+- NEVER write a bullet whose final rendered line will contain fewer than 4 words (a "widow line"). Specifically: avoid sentences that end with a short clause like "from days to minutes." or "stored Excel passwords." which would wrap such that the period falls alone on a final line. Instead, either tighten the sentence so it ends mid-line, or pad the final clause so the last line has 4+ words.
+- If a base bullet is already widow-safe and at the word ceiling, prefer leaving it unchanged over rewriting.
+- If tailoring would push the resume over 1 page, prefer CUTTING low-relevance bullets (e.g. interning roles that don't match the JD) over shortening high-relevance ones. Total bullet count can drop; bullet quality cannot.
+- For the Skills section: keep section labels and ordering matched to the JD priority, but the entire Skills section should fit in 4-6 lines total (≤ ~600 characters including labels).
 
 4. TONE: Write like a competent engineer describing what they built FOR USERS, not like a developer listing what they used. Concrete, specific, plain language. Lead with outcomes; let stack lists trail.
 
@@ -415,12 +425,10 @@ Return this JSON (no markdown fences, no commentary):
 
 Current date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}.
 
-CANDIDATE (use ONLY these facts — do not invent):
-- B.S. Computer Science + B.S. Data Science, UW-Madison (graduated May 2025; ~1 year full-time experience since)
-- ~1 year full-time SWE at Enidus USA LLC: Node.js BFF for T-Mobile carrier APIs with OAuth/PoP auth; governed multi-tenant reporting system with RBAC; production RAG AI chatbot (FastAPI, GPT-4o-mini, Qdrant) with 3-layer security model
-- RAG capstone: 22K+ docs, 300K+ embeddings, 73% QA accuracy, 40% latency reduction
-- Orahi internship: dynamic route algo (80% manual effort reduction), Flask REST APIs
-- Core skills: ${job.tags.join(', ')}, Node.js, TypeScript, Python, PostgreSQL, AWS S3, PyTorch, Apache Spark
+CANDIDATE FACTS (use ONLY these — do not invent):
+${CANDIDATE_FACTS}
+
+JD-specific tech tags from this listing: ${job.tags.join(', ')}.
 
 TARGET: ${job.title} at ${job.company}
 JD: ${job.desc}
@@ -458,11 +466,7 @@ RULES:
     const qaPrompt = `Answer these job application questions for Sahil Mehta applying to ${job.title} at ${job.company}.
 
 CANDIDATE FACTS (use ONLY these — do not invent):
-- CS + Data Science grad UW-Madison 2025
-- Full-time SWE at Enidus: Node.js BFF for T-Mobile APIs (OAuth/PoP auth), multi-tenant RBAC reporting, RAG AI chatbot (FastAPI/Qdrant/GPT-4o-mini, 3-layer security, 8 RBAC roles, 52 pytest cases parametrized to 400+ invocations)
-- RAG capstone: 22K docs, 300K+ embeddings, 73% accuracy, 40% latency reduction, 25+ features
-- Orahi: 80% manual student-assignment effort reduction via K-means clustering, Flask REST APIs
-- GSPANN: CNN-based pneumonia detection on chest X-rays; iterated on preprocessing and data augmentation
+${CANDIDATE_FACTS}
 
 QUESTIONS:
 ${defaultQs.map((q, i) => `${i + 1}. ${q}`).join('\n')}

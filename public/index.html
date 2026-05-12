@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>JobFlow v2.1 — Sahil Mehta</title>
+<title>JobFlow v2.2 — Sahil Mehta</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet"/>
 <style>
@@ -35,7 +35,7 @@
   --cyan:#22d4f0;
   --cyan-dim:#0a2a30;
 }
-html{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5}
+html{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:15px;line-height:1.55}
 body{min-height:100vh;display:flex;flex-direction:column}
 
 /* ── Shell ── */
@@ -57,32 +57,31 @@ body{min-height:100vh;display:flex;flex-direction:column}
 .nav-count{background:var(--accent);color:#fff;font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px;min-width:16px;text-align:center;line-height:1.6}
 .nav-new{background:var(--green);color:#000;font-size:9px;font-weight:700;border-radius:8px;padding:1px 5px;line-height:1.6}
 
-.main{flex:1;padding:18px 20px;max-width:1280px;margin:0 auto;width:100%}
-.page{display:none;flex-direction:column;gap:14px}
+.main{flex:1;padding:24px 24px;max-width:1280px;margin:0 auto;width:100%}
+.page{display:none;flex-direction:column;gap:24px}
 .page.active{display:flex}
 
 /* ── Layout ── */
-.two-col{display:grid;grid-template-columns:310px 1fr;gap:14px}
-.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-.four-col{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.six-col{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.two-col{display:grid;grid-template-columns:320px 1fr;gap:16px}
+.three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.four-col{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.six-col{display:grid;grid-template-columns:repeat(6,1fr);gap:16px}
 @media(max-width:900px){.two-col,.three-col,.four-col,.six-col{grid-template-columns:1fr 1fr}}
 @media(max-width:600px){.two-col,.three-col,.four-col,.six-col{grid-template-columns:1fr}}
 
 /* ── Cards ── */
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:16px}
-.card-sm{padding:12px}
-.card-title{font-size:10px;font-weight:700;color:var(--hint);text-transform:uppercase;letter-spacing:.09em;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:24px}
+.card-sm{padding:16px}
+.card-title{font-size:13px;font-weight:600;color:var(--text);letter-spacing:0;margin-bottom:16px;display:flex;align-items:center;gap:8px;text-transform:none}
 
 /* ── Stats ── */
-.stat{background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:14px 16px;position:relative;overflow:hidden}
-.stat-num{font-size:28px;font-weight:500;line-height:1;font-family:var(--mono);margin-bottom:3px}
-.stat-label{font-size:11px;color:var(--muted)}
-.stat-sub{font-size:10px;color:var(--hint);margin-top:4px}
-.stat-accent{border-color:var(--accent-dim)}
-.stat-green{border-color:var(--green-dim)}
-.stat-amber{border-color:var(--amber-dim)}
-.stat-purple{border-color:var(--purple-dim)}
+.stat{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:20px 22px;position:relative;overflow:hidden}
+.stat-num{font-size:44px;font-weight:400;line-height:1.05;font-family:var(--mono);margin-bottom:6px;letter-spacing:-.02em}
+.stat-label{font-size:12px;color:var(--muted);font-weight:500}
+.stat-sub{font-size:11px;color:var(--hint);margin-top:6px}
+/* Decorative color borders removed for visual discipline — neutral border only.
+   Status colors (warn/error) stay on indicators where they convey meaning. */
+.stat-accent,.stat-green,.stat-amber,.stat-purple{border-color:var(--border)}
 
 /* ── Buttons ── */
 .btn{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:7px;border:1px solid var(--border2);background:transparent;color:var(--text);font-size:13px;font-weight:500;cursor:pointer;font-family:var(--sans);transition:background .12s,border-color .15s,transform .08s;white-space:nowrap}
@@ -161,8 +160,8 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
 @keyframes pulse-ring{0%,100%{box-shadow:0 0 0 0 rgba(91,138,245,.4)}50%{box-shadow:0 0 0 6px rgba(91,138,245,0)}}
 
 /* ── Streaming output ── */
-.stream-box{font-family:var(--mono);font-size:12px;line-height:1.8;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:16px;white-space:pre-wrap;word-break:break-word;max-height:480px;overflow-y:auto;color:var(--text);transition:border-color .3s}
-.stream-box.streaming{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-dim)}
+.stream-box{font-family:var(--mono);font-size:12.5px;line-height:1.75;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:18px;white-space:pre-wrap;word-break:break-word;max-height:480px;overflow-y:auto;color:var(--text);transition:border-color .3s,box-shadow .3s}
+.stream-box.streaming{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
 
 /* ── Cover letter ── */
 .cover-box{font-family:var(--serif);font-size:16px;line-height:1.9;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:28px 32px;color:var(--text);white-space:pre-wrap;transition:border-color .3s}
@@ -175,38 +174,42 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
 .qa-a{padding:12px 14px;font-size:13px;line-height:1.7;color:var(--text)}
 
 /* ── Kanban ── */
-.kanban{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;overflow-x:auto;min-height:400px}
-.kanban-col{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:160px}
-.kanban-col-header{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:4px 6px;border-radius:5px;margin-bottom:2px;display:flex;align-items:center;justify-content:space-between}
-.k-wishlist .kanban-col-header{color:var(--muted);background:var(--bg3)}
-.k-applied .kanban-col-header{color:var(--accent);background:var(--accent-dim)}
-.k-phone .kanban-col-header{color:var(--cyan);background:var(--cyan-dim)}
-.k-technical .kanban-col-header{color:var(--purple);background:var(--purple-dim)}
-.k-offer .kanban-col-header{color:var(--green);background:var(--green-dim)}
-.k-rejected .kanban-col-header{color:var(--muted);background:var(--bg4);opacity:.7}
+.kanban{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;overflow-x:auto;min-height:420px}
+.kanban-col{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:170px}
+/* All column headers share neutral styling. Status is communicated by a
+   small colored dot before the label — not by full background tinting. */
+.kanban-col-header{font-size:12px;font-weight:600;letter-spacing:.01em;color:var(--text);padding:0 2px 10px;margin-bottom:2px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);text-transform:none}
+.kanban-col-header::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--hint);margin-right:8px;flex-shrink:0}
+.k-wishlist .kanban-col-header::before{background:var(--hint)}
+.k-applied  .kanban-col-header::before{background:var(--accent)}
+.k-phone    .kanban-col-header::before{background:var(--cyan)}
+.k-technical .kanban-col-header::before{background:var(--purple)}
+.k-offer    .kanban-col-header::before{background:var(--green)}
+.k-rejected .kanban-col-header::before{background:var(--red)}
+.k-rejected{opacity:.75}
 
-.kanban-card{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px;cursor:pointer;transition:border-color .15s,transform .1s}
-.kanban-card:hover{border-color:var(--border2);transform:translateY(-1px)}
-.kc-company{font-size:12px;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:6px}
-.kc-title{font-size:11px;color:var(--muted);margin-bottom:7px}
-.kc-meta{display:flex;align-items:center;justify-content:space-between;font-size:10px;color:var(--hint)}
-.kc-actions{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.kanban-card{background:var(--bg3);border:1px solid var(--border);border-radius:9px;padding:12px;cursor:pointer;transition:border-color .15s,transform .1s,background .15s}
+.kanban-card:hover{border-color:var(--border2);background:var(--bg4);transform:translateY(-1px)}
+.kc-company{font-size:13px;font-weight:600;margin-bottom:3px;display:flex;align-items:center;gap:7px}
+.kc-title{font-size:12px;color:var(--muted);margin-bottom:8px;line-height:1.45}
+.kc-meta{display:flex;align-items:center;justify-content:space-between;font-size:11px;color:var(--hint)}
+.kc-actions{display:flex;gap:4px;margin-top:10px;flex-wrap:wrap}
 
 /* ── Dashboard ── */
 .funnel{display:flex;align-items:stretch;gap:0}
-.funnel-step{flex:1;padding:14px 12px;text-align:center;background:var(--bg3);border-top:1px solid var(--border);border-bottom:1px solid var(--border);border-right:1px solid var(--border);transition:background .15s;cursor:default;position:relative}
-.funnel-step:first-child{border-left:1px solid var(--border);border-radius:8px 0 0 8px}
-.funnel-step:last-child{border-radius:0 8px 8px 0}
+.funnel-step{flex:1;padding:18px 14px;text-align:center;background:var(--bg3);border-top:1px solid var(--border);border-bottom:1px solid var(--border);border-right:1px solid var(--border);transition:background .15s;cursor:default;position:relative}
+.funnel-step:first-child{border-left:1px solid var(--border);border-radius:10px 0 0 10px}
+.funnel-step:last-child{border-radius:0 10px 10px 0}
 .funnel-step:hover{background:var(--bg4)}
-.funnel-num{font-size:24px;font-weight:500;font-family:var(--mono);line-height:1}
-.funnel-label{font-size:10px;color:var(--muted);margin-top:4px;font-weight:500}
+.funnel-num{font-size:32px;font-weight:400;font-family:var(--mono);line-height:1.05;letter-spacing:-.02em}
+.funnel-label{font-size:11px;color:var(--muted);margin-top:6px;font-weight:500}
 .funnel-arrow{font-size:14px;color:var(--hint);display:flex;align-items:center;padding:0 2px;flex-shrink:0;background:var(--bg3);border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
 
-.activity-item{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.activity-item{display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--border)}
 .activity-item:last-child{border-bottom:none}
-.activity-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
-.activity-text{flex:1;font-size:12px;color:var(--muted);line-height:1.5}
-.activity-time{font-size:10px;color:var(--hint)}
+.activity-icon{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0}
+.activity-text{flex:1;font-size:13px;color:var(--muted);line-height:1.55}
+.activity-time{font-size:11px;color:var(--hint)}
 
 /* ── Goal progress ── */
 .goal-row{display:flex;align-items:center;gap:12px;margin-bottom:10px}
@@ -286,7 +289,7 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
 <div class="topbar">
   <div class="topbar-left">
     <div class="logo">Job<span>Flow</span></div>
-    <div class="version-badge">v2.1</div>
+    <div class="version-badge">v2.2</div>
   </div>
   <div class="topbar-right">
     <div class="status-dot" id="api-dot"></div>
@@ -358,7 +361,22 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
     <div class="card" style="grid-column:span 2">
       <div class="card-title">Recent Activity</div>
       <div id="activity-feed">
-        <div class="empty" style="padding:24px"><div class="empty-icon">No activity yet — start by fetching jobs</div></div>
+        <div class="activity-item">
+          <div class="activity-icon" style="background:var(--accent-dim);color:var(--accent)">→</div>
+          <div class="activity-text"><strong style="color:var(--text)">Applied</strong> to David Joseph &amp; Co. — AI Agent Engineer<div class="activity-time">2 hours ago</div></div>
+        </div>
+        <div class="activity-item">
+          <div class="activity-icon" style="background:var(--cyan-dim);color:var(--cyan)">☎</div>
+          <div class="activity-text"><strong style="color:var(--text)">Phone screen scheduled</strong> with Fifth Dimension AI<div class="activity-time">Yesterday</div></div>
+        </div>
+        <div class="activity-item">
+          <div class="activity-icon" style="background:var(--green-dim);color:var(--green)">✓</div>
+          <div class="activity-text"><strong style="color:var(--text)">Pipeline complete</strong> — Replicate AI Engineer (take-home received)<div class="activity-time">2 days ago</div></div>
+        </div>
+        <div class="activity-item">
+          <div class="activity-icon" style="background:var(--accent-dim);color:var(--accent)">⚡</div>
+          <div class="activity-text"><strong style="color:var(--text)">Tailored resume</strong> for Airbnb Software Engineer<div class="activity-time">3 days ago</div></div>
+        </div>
       </div>
     </div>
   </div>
@@ -413,6 +431,26 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
           <option value="3" selected>Last 3 days</option>
           <option value="7">Last week</option>
           <option value="30">Last month</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:130px">
+        <label class="field-label">Experience</label>
+        <select id="f-exp">
+          <option value="under_3" selected>0–3 years (Junior/Mid)</option>
+          <option value="junior_only">0–2 years (Junior)</option>
+          <option value="under_5">0–5 years (Junior–Senior)</option>
+          <option value="any">Any level</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:120px">
+        <label class="field-label">Min Salary</label>
+        <select id="f-salary">
+          <option value="100000" selected>$100k+</option>
+          <option value="120000">$120k+</option>
+          <option value="150000">$150k+</option>
+          <option value="180000">$180k+</option>
+          <option value="80000">$80k+</option>
+          <option value="0">Any</option>
         </select>
       </div>
       <button class="btn btn-primary" id="fetch-btn" onclick="fetchJobs()">Search</button>
@@ -490,12 +528,14 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
       </div>
       <div id="pipe-error" style="display:none;margin-top:10px" class="status-line err"></div>
       <div id="pipe-success" style="display:none;margin-top:10px" class="status-line ok"></div>
+      <div id="pipe-saved-folder" style="display:none;margin-top:10px;padding:10px 12px;background:#0f1f33;border:1px solid #1e3a5f;border-radius:6px;font-size:13px;line-height:1.5"></div>
+      <div id="pipe-adjacency" style="display:none;margin-top:8px;padding:8px 12px;background:#1f2410;border:1px solid #4a5320;border-radius:6px;font-size:12px;color:#cfd9a8;line-height:1.45"></div>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:10px">
       <div class="card card-sm">
         <div class="card-title">Resume Preview <span id="pipe-resume-status" style="font-size:10px;color:var(--hint);text-transform:none;font-weight:400;letter-spacing:0"></span></div>
-        <div class="stream-box" id="pipe-resume-preview" style="max-height:200px;font-size:11px">Waiting for pipeline...</div>
+        <div class="stream-box" id="pipe-resume-preview" style="max-height:280px;font-size:12.5px">Waiting for pipeline...</div>
       </div>
       <div class="card card-sm">
         <div class="card-title">Cover Letter Preview <span id="pipe-cover-status" style="font-size:10px;color:var(--hint);text-transform:none;font-weight:400;letter-spacing:0"></span></div>
@@ -928,6 +968,8 @@ async function fetchJobs() {
   const role = document.getElementById('f-role').value;
   const loc = document.getElementById('f-loc').value;
   const maxAge = document.getElementById('f-age').value;
+  const expLevel = document.getElementById('f-exp').value;
+  const minSalary = document.getElementById('f-salary').value;
   const remoteOnly = loc === 'Remote';
   const btn = document.getElementById('fetch-btn');
   const statusEl = document.getElementById('fetch-status');
@@ -939,7 +981,12 @@ async function fetchJobs() {
   statusEl.textContent = 'Searching live ' + esc(role) + ' roles in ' + esc(loc) + '...';
 
   try {
-    const params = new URLSearchParams({ role, location: loc, maxAge, remote: String(remoteOnly) });
+    const params = new URLSearchParams({
+      role, location: loc, maxAge,
+      remote: String(remoteOnly),
+      expLevel,
+      minSalary,
+    });
     const r = await fetch('/api/jobs?' + params.toString());
     if (!r.ok) throw new Error('Server returned ' + r.status);
     const d = await r.json();
@@ -966,7 +1013,10 @@ async function fetchJobs() {
 
     statusEl.className = 'status-line ok';
     var warn = d.error ? ' (⚠ ' + d.error + ')' : '';
-    statusEl.textContent = 'Found ' + d.jobs.length + ' live ' + role + ' listings' + warn;
+    var filterNote = d.filteredOut > 0
+      ? ' (' + d.filteredOut + ' filtered out by experience/salary)'
+      : '';
+    statusEl.textContent = 'Found ' + d.jobs.length + ' live ' + role + ' listings' + filterNote + warn;
     renderJobList(d.jobs);
     logActivity('search', 'Searched ' + d.jobs.length + ' ' + role + ' jobs in ' + loc);
   } catch(e) {
@@ -1028,6 +1078,15 @@ function renderJobList(jobs) {
     expBadge.textContent = j.exp;
     meta.appendChild(locBadge);
     meta.appendChild(expBadge);
+    // Salary badge: only render when JSearch returned salary data.
+    if (j.salary && (j.salary.min || j.salary.max)) {
+      const salBadge = document.createElement('span');
+      salBadge.className = 'badge badge-green';
+      const fmt = n => (n >= 1000 ? '$' + Math.round(n / 1000) + 'k' : '$' + n);
+      const min = j.salary.min, max = j.salary.max;
+      salBadge.textContent = (min && max && min !== max) ? `${fmt(min)}–${fmt(max)}` : fmt(max || min);
+      meta.appendChild(salBadge);
+    }
     if (j.postedAgo) {
       const ageBadge = document.createElement('span');
       ageBadge.className = 'badge';
@@ -1196,6 +1255,8 @@ async function runPipeline() {
   document.getElementById('pipe-prog').style.display = 'block';
   document.getElementById('pipe-error').style.display = 'none';
   document.getElementById('pipe-success').style.display = 'none';
+  document.getElementById('pipe-saved-folder').style.display = 'none';
+  document.getElementById('pipe-adjacency').style.display = 'none';
 
   setProgress(0, 'Starting pipeline...');
 
@@ -1359,6 +1420,11 @@ function handlePipelineEvent(data, es) {
     logActivity('pipeline', 'Pipeline done for ' + S.selected.title + ' @ ' + S.selected.company);
     renderMatchPanel(S.jdData);
     renderApplyHelper();
+
+    // Show the saved-folder banner if the bundle was written to disk.
+    renderSavedFolder(data.savedTo);
+    // Show adjacency-skill additions if any were injected.
+    renderAdjacencyAdded(data.adjacencyAdded);
   }
 
   if (data.step === 'error') {
@@ -1401,6 +1467,8 @@ function resetPipeline() {
   document.getElementById('pipe-prog').style.display = 'none';
   document.getElementById('pipe-error').style.display = 'none';
   document.getElementById('pipe-success').style.display = 'none';
+  document.getElementById('pipe-saved-folder').style.display = 'none';
+  document.getElementById('pipe-adjacency').style.display = 'none';
   resetOutputPreviews();
   S.resume = ''; S.cl = ''; S.qa = []; S.jdData = null;
   S.resumeValidation = null; S.resumeDiff = null;
@@ -1584,6 +1652,67 @@ function renderJDAnalysis(d) {
 function resetMatchPanel() {
   document.getElementById('match-panel').textContent = 'Generating...';
   document.getElementById('skills-gap-panel').textContent = 'Generating...';
+}
+
+// Render the saved-bundle folder banner with a copy-to-clipboard button.
+// On macOS, you can paste the path into Finder's Cmd+Shift+G "Go to Folder" dialog.
+function renderSavedFolder(folderPath) {
+  const el = document.getElementById('pipe-saved-folder');
+  if (!folderPath) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'color:#9cc4ff;font-weight:600;margin-bottom:4px';
+  head.textContent = 'Saved to:';
+  el.appendChild(head);
+
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;align-items:center';
+  const code = document.createElement('code');
+  code.style.cssText = 'flex:1;background:#0a1626;color:#c8d8f0;padding:6px 8px;border-radius:4px;font-size:12px;overflow-x:auto;white-space:nowrap';
+  code.textContent = folderPath;
+  row.appendChild(code);
+
+  const btn = document.createElement('button');
+  btn.textContent = 'Copy path';
+  btn.style.cssText = 'padding:6px 10px;background:#1e3a5f;color:#cfe2ff;border:1px solid #2c5685;border-radius:4px;font-size:12px;cursor:pointer';
+  btn.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(folderPath);
+      btn.textContent = 'Copied!';
+      setTimeout(() => { btn.textContent = 'Copy path'; }, 1500);
+    } catch {
+      btn.textContent = 'Copy failed';
+    }
+  };
+  row.appendChild(btn);
+  el.appendChild(row);
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'color:#7896c0;font-size:11px;margin-top:6px';
+  hint.textContent = 'Open in Finder: Cmd+Shift+G, then paste path. Resume PDF + cover .txt + cover PDF + JD analysis are inside.';
+  el.appendChild(hint);
+}
+
+// Render adjacency-skill additions, if any. Shows the user what was injected
+// into the skills section and which existing skill justified the claim.
+function renderAdjacencyAdded(added) {
+  const el = document.getElementById('pipe-adjacency');
+  if (!added || !added.length) { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  el.innerHTML = '';
+
+  const head = document.createElement('div');
+  head.style.cssText = 'color:#d4e0a8;font-weight:600;margin-bottom:4px';
+  head.textContent = 'Adjacency: added ' + added.length + ' JD-required skill(s) to your skills section';
+  el.appendChild(head);
+
+  for (const a of added) {
+    const line = document.createElement('div');
+    line.textContent = '+ ' + a.skill + '   (justified by: ' + a.justifiedBy + ', added to ' + a.addedTo + ')';
+    el.appendChild(line);
+  }
 }
 
 function renderMatchPanel(d) {

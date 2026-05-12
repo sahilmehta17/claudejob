@@ -35,30 +35,75 @@ const DATE_POSTED_MAP = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Skill profile for scoring (skill overlap, not ML)
+// Expanded to include AI-engineer-relevant terms so JDs that mention modern
+// LLM/agent stacks actually score above the floor.
 // ─────────────────────────────────────────────────────────────────────────────
 const PROFILE_SKILLS = new Set([
-  'node.js', 'nodejs', 'typescript', 'javascript', 'python',
-  'postgresql', 'sql', 'sql server', 'aws', 'aws s3', 's3',
+  // Languages
+  'node.js', 'nodejs', 'typescript', 'javascript', 'python', 'java',
+  // Backend / web
+  'docker', 'flask', 'fastapi', 'django', 'express',
+  'react', 'next.js', 'nextjs', 'angular', 'react native',
+  'rest apis', 'rest', 'graphql', 'grpc',
+  // Databases
+  'postgresql', 'postgres', 'sql', 'sql server', 'mysql',
+  'timescaledb', 'mongodb', 'redis',
+  // Cloud
+  'aws', 'aws s3', 's3', 'gcp', 'azure',
+  // AI / LLM (the bulk of relevance for AI engineer roles)
+  'ai', 'artificial intelligence', 'ml', 'machine learning', 'deep learning',
+  'llm', 'llms', 'large language model', 'large language models',
+  'claude', 'anthropic', 'openai', 'openai apis', 'gpt', 'gpt-4',
+  'rag', 'retrieval augmented generation', 'retrieval-augmented generation',
+  'agent', 'agents', 'agentic', 'agentic workflow', 'agent orchestration',
+  'tool calling', 'function calling', 'function-calling',
+  'prompt engineering', 'eval', 'evals', 'evaluation',
+  'vector', 'vector search', 'vector db', 'vector database', 'vector dbs',
+  'qdrant', 'pinecone', 'weaviate', 'chroma', 'pgvector',
+  'pydantic', 'langchain', 'llamaindex',
   'pytorch', 'tensorflow', 'keras', 'scikit-learn',
-  'rag', 'vector dbs', 'vector search', 'qdrant', 'llms',
+  // Data / infra
   'apache spark', 'spark', 'hadoop', 'kafka', 'pandas', 'numpy',
-  'docker', 'flask', 'fastapi', 'django',
-  'react', 'angular', 'react native',
-  'rest apis', 'graphql', 'grpc',
-  'timescaledb', 'openai', 'openai apis',
-  'distributed systems', 'mlops', 'ml', 'machine learning',
-  'a/b testing', 'statistics', 'data modeling',
-  'git', 'bash', 'postman',
+  'mlops', 'data pipeline', 'streaming', 'sse',
+  // Ops
+  'git', 'bash', 'postman', 'ci/cd', 'kubernetes', 'k8s',
+  // Soft / methodology (low signal but realistic)
+  'agile', 'scrum',
 ]);
 
-function scoreJobByTags(tags) {
-  if (!tags || !tags.length) return 55;
+/**
+ * Score a job by skill overlap against the candidate's profile.
+ * Returns 30-98 depending on match quality. When tags are empty (JSearch
+ * didn't return skills, no keywords found), returns a low-floor score derived
+ * from the title — varies per job so the UI doesn't show identical numbers.
+ */
+function scoreJobByTags(tags, titleFallback) {
+  if (!tags || !tags.length) {
+    // No tags extracted — fall back to a title-based heuristic.
+    // Returns 30-50 range so the UI signals "low confidence" rather than "55% match".
+    if (titleFallback) {
+      const tl = titleFallback.toLowerCase();
+      let titleScore = 30;
+      // Word-boundary matching so "ai" doesn't false-positive on "captain",
+      // and explicit longer phrases for "artificial intelligence" / "machine learning".
+      if (/\b(ai|ml|llm|agent|rag)\b/.test(tl)) titleScore += 15;
+      if (/(artificial intelligence|machine learning|deep learning|generative ai|agentic)/.test(tl)) titleScore += 15;
+      if (SENIOR_TITLE.test(tl)) titleScore -= 5;
+      if (/\b(junior|new grad|entry|associate|early career)\b/.test(tl)) titleScore += 5;
+      // Add a small deterministic spread (0-5) based on title hash so identical
+      // role types still get distinguishable scores instead of all clustering.
+      const hash = [...titleFallback].reduce((a, c) => a + c.charCodeAt(0), 0);
+      return Math.min(54, Math.max(28, titleScore + (hash % 6)));
+    }
+    return 35;
+  }
   const matched = tags.filter(t => {
     const tl = t.toLowerCase();
     return PROFILE_SKILLS.has(tl) || [...PROFILE_SKILLS].some(s => s.includes(tl) || tl.includes(s));
   });
   const matchRatio = matched.length / tags.length;
-  return Math.min(98, Math.round(55 + matchRatio * 40));
+  // Score range: 45-98 when we have tags. More matches = higher score.
+  return Math.min(98, Math.round(45 + matchRatio * 53));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,21 +116,53 @@ function normalizeJob(j) {
 
   const hoursAgo = postedAt ? Math.max(0, (Date.now() - postedAt.getTime()) / (1000 * 60 * 60)) : null;
 
-  // Extract skills/tags from the API response
+  // Extract skills/tags from the API response.
+  // JSearch is inconsistent with job_required_skills, so we always supplement
+  // by extracting tech keywords from the full description + qualifications.
   const tags = [];
   if (j.job_required_skills && Array.isArray(j.job_required_skills)) {
     tags.push(...j.job_required_skills);
   }
-  // Also pull from highlights if available
-  if (j.job_highlights?.Qualifications) {
-    // Try to extract tech keywords from qualification bullets
-    const techKeywords = extractTechKeywords(j.job_highlights.Qualifications.join(' '));
-    tags.push(...techKeywords);
+  // Pull from qualifications + full description — descriptions are where most
+  // JDs actually mention LLMs, agents, RAG, etc. Highlights alone miss them.
+  const corpusParts = [];
+  if (j.job_highlights?.Qualifications) corpusParts.push(j.job_highlights.Qualifications.join(' '));
+  if (j.job_highlights?.Responsibilities) corpusParts.push(j.job_highlights.Responsibilities.join(' '));
+  if (j.job_description) corpusParts.push(j.job_description);
+  if (corpusParts.length) {
+    tags.push(...extractTechKeywords(corpusParts.join(' ')));
   }
-  // Dedupe
-  const uniqueTags = [...new Set(tags.map(t => t.trim()).filter(Boolean))].slice(0, 10);
+  // Dedupe (case-insensitive) and cap to 10.
+  const seen = new Set();
+  const uniqueTags = tags
+    .map(t => t.trim())
+    .filter(t => {
+      if (!t) return false;
+      const k = t.toLowerCase();
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .slice(0, 10);
 
   const location = [j.job_city, j.job_state].filter(Boolean).join(', ') || 'Unknown';
+
+  // Normalize salary to annual USD for filtering. JSearch returns:
+  //   job_min_salary, job_max_salary, job_salary_period (HOUR/MONTH/YEAR)
+  // Some listings have nothing — those return null and are kept by default
+  // (better to show a pay-unlisted job than exclude based on missing data).
+  const minSalary = j.job_min_salary;
+  const maxSalary = j.job_max_salary;
+  const period = j.job_salary_period;
+  const salaryAnnual = (() => {
+    if (typeof maxSalary !== 'number' && typeof minSalary !== 'number') return null;
+    const top = typeof maxSalary === 'number' ? maxSalary : minSalary;
+    const bot = typeof minSalary === 'number' ? minSalary : maxSalary;
+    const factor = period === 'HOUR' ? 2080 : period === 'MONTH' ? 12 : 1; // YEAR or unknown → 1
+    return { min: bot * factor, max: top * factor, period: 'YEAR', original: period };
+  })();
+
+  const expMonths = j.job_required_experience?.required_experience_in_months ?? null;
 
   return {
     id: j.job_id,
@@ -93,9 +170,9 @@ function normalizeJob(j) {
     title: j.job_title || 'Unknown Role',
     location,
     type: j.job_is_remote ? 'Remote' : 'On-site',
-    exp: j.job_required_experience?.required_experience_in_months
-      ? formatExpRange(j.job_required_experience.required_experience_in_months)
-      : '—',
+    exp: expMonths != null ? formatExpRange(expMonths) : '—',
+    expMonths,
+    salary: salaryAnnual,
     url: j.job_apply_link || j.job_google_link || '',
     applyUrl: j.job_apply_link || '',
     color: '#5b8af5',
@@ -130,23 +207,49 @@ function formatTimeAgo(hours) {
   return weeks + ' weeks ago';
 }
 
+// Conservative senior-title regex. Catches the unambiguous keywords without
+// false-positive on mid-level titles. Lowercase compare via the /i flag.
+// Used by the post-filter to exclude senior-titled jobs when the user selects
+// a junior/mid experience cap — JSearch's expMonths field is null on most
+// senior listings, so title detection is the reliable signal.
+const SENIOR_TITLE = /\b(senior|sr\.?|staff|principal|lead|distinguished|director|head\s+of|vp|chief)\b/i;
+
 /**
  * Extract recognizable tech keywords from a string of text.
  * Intentionally conservative — only well-known terms.
  */
 const KNOWN_TECH = new Set([
+  // Languages
   'python', 'java', 'javascript', 'typescript', 'go', 'golang', 'rust', 'c++', 'c#',
   'ruby', 'swift', 'kotlin', 'r', 'scala', 'php',
+  // Frontend / backend
   'react', 'angular', 'vue', 'node.js', 'express', 'django', 'flask', 'fastapi',
-  'spring', 'rails', 'next.js', 'nuxt',
+  'spring', 'rails', 'next.js', 'nuxt', 'svelte',
+  // Cloud / infra
   'aws', 'azure', 'gcp', 'docker', 'kubernetes', 'terraform',
+  // DBs
   'postgresql', 'mysql', 'mongodb', 'redis', 'elasticsearch', 'dynamodb',
   'sql', 'nosql', 'graphql', 'rest', 'grpc',
+  // Classic ML / data
   'pytorch', 'tensorflow', 'keras', 'scikit-learn', 'pandas', 'numpy', 'spark',
   'kafka', 'airflow', 'dbt', 'snowflake', 'databricks', 'bigquery', 'redshift',
+  // Ops
   'git', 'ci/cd', 'jenkins', 'github actions',
-  'machine learning', 'deep learning', 'nlp', 'computer vision', 'llm', 'rag',
-  'distributed systems', 'microservices',
+  // AI / LLM (the bulk of relevance — what was missing before)
+  'machine learning', 'deep learning', 'nlp', 'computer vision',
+  'ai', 'artificial intelligence', 'ml',
+  'llm', 'llms', 'large language model', 'large language models',
+  'rag', 'retrieval augmented generation', 'retrieval-augmented generation',
+  'agent', 'agents', 'agentic', 'agent orchestration',
+  'tool calling', 'function calling', 'function-calling', 'tool use',
+  'prompt engineering', 'evals', 'evaluation framework',
+  'vector', 'vector search', 'vector database', 'vector db',
+  'qdrant', 'pinecone', 'weaviate', 'chroma', 'pgvector', 'milvus',
+  'openai', 'anthropic', 'claude', 'gpt', 'gpt-4', 'gpt-4o',
+  'pydantic', 'langchain', 'llamaindex',
+  'streaming', 'sse',
+  // Architecture
+  'distributed systems', 'microservices', 'serverless', 'event-driven',
 ]);
 
 function extractTechKeywords(text) {
@@ -166,7 +269,7 @@ function extractTechKeywords(text) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Fetch jobs from JSearch API
 // ─────────────────────────────────────────────────────────────────────────────
-async function fetchFromJSearch(query, location, datePeriod, remoteOnly, page = 1) {
+async function fetchFromJSearch(query, location, datePeriod, remoteOnly, opts = {}, page = 1) {
   const apiKey = process.env.RAPIDAPI_KEY;
   if (!apiKey) {
     return { jobs: [], error: 'RAPIDAPI_KEY not set — add it to .env' };
@@ -189,6 +292,20 @@ async function fetchFromJSearch(query, location, datePeriod, remoteOnly, page = 
   }
   if (remoteOnly) {
     params.set('remote_jobs_only', 'true');
+  }
+
+  // Experience filter — JSearch supports server-side filtering via job_requirements.
+  // Valid values: under_3_years_experience, more_than_3_years_experience,
+  // no_experience, no_degree. Multiple comma-separated.
+  // We map the UI options to the closest server-side filter, then post-filter
+  // for tighter control (the JSearch buckets are coarse).
+  if (opts.expLevel === 'junior_only') {
+    params.set('job_requirements', 'no_experience,under_3_years_experience');
+  } else if (opts.expLevel === 'under_3') {
+    params.set('job_requirements', 'no_experience,under_3_years_experience');
+  } else if (opts.expLevel === 'under_5') {
+    // Under 5 has no direct bucket — request under_3 + accept post-filter top-up
+    params.set('job_requirements', 'no_experience,under_3_years_experience');
   }
 
   const url = `${JSEARCH_BASE}?${params.toString()}`;
@@ -222,11 +339,38 @@ async function fetchFromJSearch(query, location, datePeriod, remoteOnly, page = 
 
     const jobs = data.data.map(normalizeJob);
 
+    // ── Post-filter ───────────────────────────────────────────────────────
+    // (1) Experience cap — JSearch's server-side buckets are coarse, so we
+    //     enforce the actual ceiling here using normalized expMonths.
+    //     Listings with expMonths == null are kept (no signal != fail).
+    let filtered = jobs;
+    const expCapMonths = (() => {
+      if (opts.expLevel === 'junior_only') return 24;  // 0-2 yrs
+      if (opts.expLevel === 'under_3')     return 36;  // 0-3 yrs
+      if (opts.expLevel === 'under_5')     return 60;  // 0-5 yrs
+      return null;
+    })();
+    if (expCapMonths != null) {
+      filtered = filtered.filter(j => {
+        if (SENIOR_TITLE.test(j.title)) return false;
+        return j.expMonths == null || j.expMonths <= expCapMonths;
+      });
+    }
+
+    // (2) Min salary — drop listings whose MAX salary (annualized) is below
+    //     the user's floor. Listings with no salary data are kept by default.
+    if (typeof opts.minSalaryUsd === 'number' && opts.minSalaryUsd > 0) {
+      filtered = filtered.filter(j => {
+        if (!j.salary || typeof j.salary.max !== 'number') return true; // unlisted: keep
+        return j.salary.max >= opts.minSalaryUsd;
+      });
+    }
+
     // Score and sort
-    const scored = jobs.map(j => ({ ...j, score: scoreJobByTags(j.tags) }));
+    const scored = filtered.map(j => ({ ...j, score: scoreJobByTags(j.tags, j.title) }));
     scored.sort((a, b) => b.score - a.score);
 
-    return { jobs: scored, error: null };
+    return { jobs: scored, error: null, filteredCount: jobs.length - filtered.length };
   } catch (e) {
     console.error('JSearch fetch failed:', e.message);
     return { jobs: [], error: `JSearch fetch failed: ${e.message}` };
@@ -238,12 +382,19 @@ async function fetchFromJSearch(query, location, datePeriod, remoteOnly, page = 
 // Fetches LIVE from JSearch API. Returns real posting dates and direct apply URLs.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
-  const { role, location, maxAge = '7', remote } = req.query;
+  const { role, location, maxAge = '7', remote, expLevel, minSalary } = req.query;
 
   const query = ROLE_QUERIES[role] || role || 'software engineer';
   const remoteOnly = remote === 'true';
 
-  const { jobs, error } = await fetchFromJSearch(query, location, maxAge, remoteOnly);
+  // Parse filter opts. expLevel: 'any' | 'junior_only' | 'under_3' | 'under_5'.
+  // minSalary: numeric USD floor (e.g. 100000); 0 or missing = no filter.
+  const opts = {
+    expLevel: expLevel && expLevel !== 'any' ? expLevel : null,
+    minSalaryUsd: minSalary ? parseInt(minSalary, 10) || 0 : 0,
+  };
+
+  const { jobs, error, filteredCount } = await fetchFromJSearch(query, location, maxAge, remoteOnly, opts);
 
   if (error && jobs.length === 0) {
     // Return error to frontend so it can display it
@@ -253,6 +404,7 @@ router.get('/', async (req, res) => {
   res.json({
     jobs,
     total: jobs.length,
+    filteredOut: filteredCount || 0,
     error: error || null,
     source: 'jsearch',
     fetchedAt: new Date().toISOString(),
@@ -292,7 +444,7 @@ router.get('/:id', async (req, res) => {
     }
 
     const job = normalizeJob(data.data[0]);
-    job.score = scoreJobByTags(job.tags);
+    job.score = scoreJobByTags(job.tags, job.title);
     res.json(job);
   } catch (e) {
     console.error('Job detail fetch failed:', e.message);

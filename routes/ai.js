@@ -1,82 +1,19 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const router = express.Router();
+const { RESUME_BASE_JSON, renderResumeText, applyAdjacency } = require('./resumeContent');
+const { saveApplicationBundle } = require('./saveBundle');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SAHIL'S BASE RESUME — source of truth for all AI tailoring
+// JSON content lives in resumeContent.js. We derive the plain-text version here
+// for the LLM prompt context, the frontend diff display, and the validators.
+// PDF generation goes JSON → Python (generate_resume.py), never text → PDF.
 // ─────────────────────────────────────────────────────────────────────────────
-const RESUME_BASE = `SAHIL MEHTA
-New York City, NY | sahilmehta0204@gmail.com | ${process.env.RESUME_PHONE || '[phone available on request]'}
+const RESUME_BASE = renderResumeText(RESUME_BASE_JSON);
 
-EDUCATION
-University of Wisconsin, Madison
-B.S. Computer Science | B.S. Data Science (double major) — May 2025
-
-PROFESSIONAL EXPERIENCE
-
-Software Developer — Enidus USA LLC. (Full-Time) | Jun 2025–Present, Hicksville NY
-
-  Custom Reporting System
-  • Led end-to-end development of a governed, user-configurable reporting system with multi-tenant isolation over predefined datasets.
-  • Implemented tenant-scoped parameterized queries and RBAC enforcement for strict data isolation across enterprise portals.
-  • Built backend services in Node.js/Express for report definitions, dynamic query execution, cron-based scheduling, and exports.
-  • Secured execution pipeline with CSRF protection, XSS sanitization, and Content Security Policy enforcement.
-
-  Backend-For-Frontend (BFF) Infrastructure
-  • Built a Node.js BFF using Express, serving an Angular frontend as the sole integration layer to multiple T-Mobile carrier APIs.
-  • Implemented OAuth-based auth flows with per-request PoP token generation, secure header signing, and session-scoped credential handling.
-  • Orchestrated downstream API calls via Axios with validation, response aggregation, transformation, and normalization.
-  • Implemented retry logic, timeout handling, and fallback paths for intermittent carrier API failure resilience.
-
-  RAG AI Chatbot — ControlCenter T-Mobile for Business
-  • Architected a production NL-to-SQL AI assistant over live telecom account data using FastAPI, GPT-4o-mini, and Qdrant, enabling business users to query BANs, SIM lines, and activations in plain English without SQL access.
-  • Engineered a 3-layer security model (parameterized SQL templates + session-injected reseller scoping + SQL Server RLS) across 8 RBAC roles, with the LLM restricted to tool selection only — never raw SQL generation — eliminating prompt injection as an attack surface.
-  • Built a vector knowledge layer across 4 Qdrant domains (glossary, schema, tool catalog, runbooks) with per-tenant hard-filtering, routing 100% of queries through a 6-intent classifier before any data access.
-  • Instrumented 9 SQL governance tables for audit logging, tool registry, and RLS policy management; enforced PII redaction across 6 field types (MSISDN, SIM/ICCID, IMEI, IMSI, email, tax_id) from all logs and LLM context.
-  • Delivered full-stack implementation with a React/TypeScript chat UI, session-aware conversation context, Dockerized services, and 52 passing pytest unit tests across intent, planning, and execution layers.
-
-  T-Mobile PIL API Gateway
-  • Designed and built a Node.js/TypeScript Express API gateway as a compatibility layer between legacy T-Mobile for Business clients and T-Mobile's Partner Integration Layer (PIL) Order API v2, allowing enterprise clients to migrate with zero client-side code changes.
-  • Implemented ~20 full-stack operation adapters (SuspendLine, RestoreLine, CancelLine, SimSwap pSIM/eSIM, ChangeService, ChangePhoneNumber, device orders, UpdateOrder, NpaNxx search, usage, payments, validateAddress) with forward schema translation into PIL's productOrder envelope and reverse mappers for legacy response shapes.
-  • Designed a unified auth model via a single POST /auth/token endpoint accepting client HS256 JWTs, jti-allowlist verification against a ClientTokens SQL table, and issuance of 3 tokens per request (T-Mobile access, T-Mobile ID, and a short-lived service JWT with embedded permissions).
-  • Implemented T-Mobile PoP token signing (RS256 with x5t fingerprint header and ath/edts body-hash claims), ensuring zero T-Mobile credentials leave the server and that jti revocation takes effect in under 1 request round-trip rather than at token expiry.
-  • Built parameterized permission middleware, per-request correlation IDs, a log scrubber rewriting secrets to last-4-character tails, and per-route file rotation.
-  • Delivered an admin portal and Next.js 16 App Router developer portal with self-service token rotation in under 60 seconds, one-time JWT reveal UX, and idempotency-key headers to prevent double-mint on retried requests.
-  • Executed a production recovery migration using sp_rename over a cursor on sys.check_constraints to resolve constraint dependency issues; authored node:test suites using a require.cache DB-stub pattern to eliminate network and DB dependencies in CI.
-
-  Enterprise AI Copilot — T-Mobile Fleet Management
-  • Architected an agent-ready enterprise AI copilot with a FastAPI/Python backend (6.2K LOC) and a React 19 + TypeScript + Vite + Tailwind frontend (15K LOC), designed for hot-swap replacement of the intent router by an LLM planning agent.
-  • Designed a 53-intent NLU routing layer dispatching to 43 Pydantic-typed tool handlers, with contracts shaped for direct compatibility with Claude and GPT-4 function-calling and tool results structured for agent consumption.
-  • Built multi-step transactional wizard flows for device purchase, line suspend, and plan upgrade, with shared state, confirmation surfaces, and cart-style orchestration across 10+ domain panels (BillingDashboard, UsageDashboard, EipDashboard, DevicePanel, FloatingCart, AlertPanel, ActivityCards).
-  • Implemented streaming response infrastructure and session-aware conversation state on FastAPI, with a React 19 chat interface rendering domain-specific panels inline alongside assistant messages.
-  • Designed AlertPanel to surface usage anomalies and billing spikes proactively, with the architecture prepared for agent-pushed notifications via the same streaming transport.
-
-Software Developer — Orahi (Internship) | Jul–Aug 2024, Remote
-  • Built a dynamic bus route adjustment algorithm for new student assignments, reducing manual effort by 80%.
-  • Optimized vehicle telemetry ingestion using Flask REST APIs, reducing location update latency by 15%.
-  • Applied K-means clustering to balance bus loads under time constraints, reducing app crashes by 10%.
-
-Data Scientist — GSPANN Technologies (Internship) | Jun–Aug 2023, Remote
-  • Built and evaluated a CNN-based pneumonia detection model using chest X-rays; achieved 97% test accuracy via preprocessing and augmentation.
-
-PROJECTS
-
-RAG Pipeline — Denari AI Capstone | Jan–May 2025, Madison WI
-  • Built and deployed a full-stack RAG system (TypeScript, TimescaleDB, Docker, S3, OpenAI APIs) processing 22K+ documents and 300K+ embeddings.
-  • Implemented hybrid retrieval (BM25, TF-IDF) with semantic re-ranking, achieving 73% QA benchmark accuracy.
-  • Reduced end-to-end query latency by 40% via optimized chunking, parallel embedding generation, and hypertable indexing.
-  • Led Agile/Scrum development delivering 25+ production-grade features across ingestion, embeddings, DB, and retrieval modules.
-
-SKILLS
-Languages: Java, JavaScript/TypeScript, Python, C, Kotlin, Swift, R
-Frameworks: Node.js, Express, React, Next.js, Angular, Vite, Tailwind, FastAPI, Flask, Django, React Native, Pydantic
-Databases & APIs: SQL, SQL Server, PostgreSQL, TimescaleDB, GraphQL, REST, gRPC, AWS S3, JWT/OAuth, PoP tokens
-AI/ML: TensorFlow, Keras, PyTorch, Scikit-learn, OpenAI APIs, Claude function-calling, RAG, vector search, Qdrant
-Big Data: Apache Spark, Hadoop, HDFS, Kafka, PyArrow, Pandas, NumPy, Matplotlib
-Tools: Docker, Git, Bash, Postman, JIRA, Agile/Scrum
-Certifications: SnowPro Associate & Core (2024)`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RESUME GUARDRAILS — banned phrases and validation
@@ -167,7 +104,36 @@ function validateResumeOutput(resumeText) {
     warnings.push(`Missing companies from source: ${missing.join(', ')}`);
   }
 
-  const valid = bannedFound.length === 0 && warnings.filter(w => w.includes('fabrication')).length === 0;
+  // Narrative-before-jargon heuristic: flag bullets that open with stacked tech
+  // terms instead of a user-facing outcome. A non-engineer should understand
+  // sentence one. Tech inside parens is fine — that's a trailing detail by design.
+  const TECH_LEAD_TERMS = new Set([
+    ...SOURCE_FACTS.tools.map(t => t.toLowerCase()),
+    'rag', 'llm', 'nl-to-sql', 'crud', 'mvc', 'orm', 'spa', 'sse', 'cnn',
+    'fastapi/python', 'node.js/typescript', 'node.js/express', 'react/typescript',
+  ]);
+  const bulletLines = resumeText.split('\n').filter(l => /^\s*[•\-*]\s+\S/.test(l));
+  const jargonLeadBullets = [];
+  for (const line of bulletLines) {
+    const raw = line.replace(/^\s*[•\-*]\s*/, '').trim();
+    // Strip parenthetical content — that's explicit trailing detail, not the lead.
+    const stripped = raw.replace(/\([^)]*\)/g, ' ');
+    // Tokenize on whitespace AND slash so "FastAPI/Python" counts as two tech tokens.
+    const firstWords = stripped.split(/[\s/]+/).slice(0, 12)
+      .map(w => w.toLowerCase().replace(/[.,;:'"`]/g, ''))
+      .filter(Boolean);
+    const techCount = firstWords.filter(w => TECH_LEAD_TERMS.has(w)).length;
+    if (techCount >= 3) {
+      jargonLeadBullets.push(raw.slice(0, 70) + (raw.length > 70 ? '…' : ''));
+    }
+  }
+  if (jargonLeadBullets.length > 0) {
+    warnings.push(`Bullet leads with tech jargon (rewrite to lead with user outcome): "${jargonLeadBullets.join('"; "')}"`);
+  }
+
+  const valid = bannedFound.length === 0
+    && warnings.filter(w => w.includes('fabrication')).length === 0
+    && jargonLeadBullets.length === 0;
   return { valid, warnings, bannedFound };
 }
 
@@ -251,8 +217,16 @@ REQUIRED SKILLS: ${job.tags.join(', ')}
 JD: ${job.desc}
 EMPHASIS: ${emphasis}
 
-SOURCE RESUME (this is the ONLY source of truth):
-${RESUME_BASE}
+SOURCE RESUME (this is the ONLY source of truth — JSON, the canonical schema):
+${JSON.stringify(RESUME_BASE_JSON, null, 2)}
+
+OUTPUT FORMAT: Return ONLY a JSON object matching the SAME SCHEMA as the source above. No markdown fences, no commentary, no prose explanation. The JSON will be parsed by JSON.parse() — anything other than valid JSON breaks the pipeline.
+
+You may modify the values within bullets/skills (per rules below). You MUST preserve:
+  - The top-level keys (name, contact, sections)
+  - Section types and order keys
+  - Item structure (title/date/location/subsections, etc.)
+  - All numbers, percentages, dates, company names, and tool names exactly
 
 STRICT RULES — violations will cause rejection:
 
@@ -274,11 +248,30 @@ STRICT RULES — violations will cause rejection:
    - Add a summary/objective section
    - Change the format, section headers, or structure
 
-4. TONE: Write like a competent engineer describing their own work — concrete, specific, plain language. Not like a resume-writing service.
+4. TONE: Write like a competent engineer describing what they built FOR USERS, not like a developer listing what they used. Concrete, specific, plain language. Lead with outcomes; let stack lists trail.
 
-5. If the JD requires skills or experience the source resume does NOT clearly demonstrate, DO NOT fabricate coverage. Simply omit or leave the resume as-is for that area.
+5. NARRATIVE BEFORE JARGON — every bullet must pass the "non-engineer test." A reader who doesn't know FastAPI from Flask should be able to read the first sentence of any bullet and understand what was built and who it helps. Technology stacks belong at the END of a bullet (in a trailing fragment) or in the SKILLS section — never as the opening clause.
 
-6. Return ONLY the full resume text in the same plain-text format. No commentary, no markdown, no explanation.`;
+   Apply this test to every bullet you write or edit:
+   - Does the first 8 words name a user-facing outcome (what users can now do, or what problem is solved)? If no, rewrite.
+   - Are 3+ of the first 10 words technology names (FastAPI, React, Pydantic, etc.)? If yes, rewrite.
+   - Could a product manager understand what was shipped from sentence one alone? If no, rewrite.
+
+   BAD (jargon stack, no user outcome):
+   "Architected an agent-ready enterprise AI copilot on a FastAPI/Python backend with React 19 + TypeScript frontend, designed for hot-swap replacement of the intent router by an LLM planning agent."
+
+   GOOD (outcome first, stack trails):
+   "Built a conversational AI copilot for managing enterprise telecom accounts: users order devices, suspend lines, and upgrade plans through chat instead of clicking through 10+ portal screens. FastAPI + Python backend, React 19 + TypeScript frontend."
+
+   BAD (NL-to-SQL is jargon for "asks questions"):
+   "Architected a production NL-to-SQL AI assistant over live telecom account data using FastAPI, GPT-4o-mini, and Qdrant."
+
+   GOOD (the system's actual job, then the stack):
+   "Built a production AI assistant that lets account admins ask plain-English questions about their accounts ('how many lines on BAN 9234?') and get answers pulled live from the database. FastAPI, GPT-4o-mini, Qdrant."
+
+6. If the JD requires skills or experience the source resume does NOT clearly demonstrate, DO NOT fabricate coverage. Simply omit or leave the resume as-is for that area.
+
+7. Return ONLY a JSON object matching the source schema. No markdown fences, no commentary, no prose. The very first character of your response must be \`{\` and the very last must be \`}\`.`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -288,8 +281,12 @@ STRICT RULES — violations will cause rejection:
 router.get('/pipeline-stream', async (req, res) => {
   let job;
   try {
-    job = JSON.parse(decodeURIComponent(req.query.job || ''));
-  } catch {
+    // Express has already URL-decoded req.query — calling decodeURIComponent
+    // again would double-decode any '%' in the JD (e.g. "20% YoY") and either
+    // corrupt the JSON or throw URIError on malformed sequences like "%YoY".
+    job = JSON.parse(req.query.job || '{}');
+  } catch (e) {
+    console.error('[pipeline-stream] JSON.parse failed:', e.message);
     return res.status(400).json({ error: 'Invalid job param — must be URL-encoded JSON' });
   }
 
@@ -354,27 +351,60 @@ Return this JSON (no markdown fences, no commentary):
 
     const jdData = jdParsed.data;
 
-    // ── STEP 2: Resume Tailoring ───────────────────────────────────────────────
+    // ── STEP 2: Resume Tailoring (JSON-out) ───────────────────────────────────
+    // The LLM emits JSON matching RESUME_BASE_JSON's schema. We parse, apply
+    // adjacency-skill injection (deterministic, not LLM), then render the text
+    // version for UI display + validation. PDF generation later uses the JSON
+    // directly via generate_resume.py — text never round-trips.
     if (aborted) { res.end(); return; }
     send({ step: 'resume', status: 'start' });
 
     const emphasis = jdData?.emphasis || 'Backend';
     const resumePrompt = buildResumePrompt(job, emphasis);
 
-    let resumeText = '';
-    await streamText(resumePrompt, 1800, (chunk) => {
-      resumeText += chunk;
-      if (!aborted) send({ step: 'resume', type: 'chunk', text: chunk });
+    // Stream into a buffer instead of pushing chunks to UI — JSON tokens look
+    // ugly mid-flight, and we render the polished text in one shot at the end.
+    let resumeJsonRaw = '';
+    await streamText(resumePrompt, 4000, (chunk) => {
+      resumeJsonRaw += chunk;
+      // Keep UI alive with a heartbeat that doesn't dump JSON tokens to it.
+      if (!aborted && resumeJsonRaw.length % 400 < chunk.length) {
+        send({ step: 'resume', type: 'progress', generated: resumeJsonRaw.length });
+      }
     });
 
-    // Validate resume output
+    let tailoredJson;
+    const parsed = safeParseJSON(resumeJsonRaw);
+    if (parsed.error) {
+      console.warn('[resume] LLM did not return valid JSON, falling back to base. Error:', parsed.error);
+      tailoredJson = RESUME_BASE_JSON;
+      send({ step: 'resume', type: 'warning', message: 'LLM JSON parse failed — using base resume. ' + parsed.error });
+    } else {
+      tailoredJson = parsed.data;
+    }
+
+    // Apply adjacency: inject JD-required skills the candidate lacks but has a
+    // close-enough adjacent skill for. Skills NOT in the curated map are never
+    // added — no fabrication.
+    const jdRequiredSkills = (jdData?.matched_skills || [])
+      .concat(jdData?.missing_skills || [])
+      .concat(job.tags || []);
+    const adjacencyResult = applyAdjacency(tailoredJson, jdRequiredSkills);
+    tailoredJson = adjacencyResult.json;
+
+    // Render text version for UI display + validation.
+    const resumeText = renderResumeText(tailoredJson);
     const validation = validateResumeOutput(resumeText);
     const diff = generateResumeDiff(RESUME_BASE, resumeText);
+
+    // Send the rendered text as a single chunk so the UI shows the final resume.
+    send({ step: 'resume', type: 'chunk', text: resumeText });
     send({
       step: 'resume',
       status: 'done',
       validation,
       diff,
+      adjacencyAdded: adjacencyResult.added,
     });
 
     // ── STEP 3: Cover Letter ───────────────────────────────────────────────────
@@ -458,6 +488,25 @@ RULES:
       send({ step: 'qa', status: 'done', data: qaParsed.data });
     }
 
+    // ── STEP 5: Save bundle to ~/Desktop/JobApplications/{slug}/ ──────────────
+    // Best-effort — if save fails (e.g., disk full, permissions), pipeline still
+    // completes successfully and surfaces the error to the UI as a warning.
+    let saveResult = null;
+    try {
+      saveResult = await saveApplicationBundle({
+        company: job.company,
+        title: job.title,
+        resumeJson: tailoredJson,
+        coverText,
+        jdAnalysis: jdData,
+        candidateName: RESUME_BASE_JSON.name,
+      });
+      send({ step: 'save', status: 'done', folder: saveResult.folder, files: saveResult.files });
+    } catch (e) {
+      console.error('[save] Failed to save application bundle:', e.message);
+      send({ step: 'save', status: 'error', message: e.message });
+    }
+
     // ── DONE ──────────────────────────────────────────────────────────────────
     send({
       step: 'complete',
@@ -468,6 +517,8 @@ RULES:
       jd: jdData,
       resumeValidation: validation,
       resumeDiff: diff,
+      savedTo: saveResult?.folder || null,
+      adjacencyAdded: adjacencyResult.added,
     });
     res.end();
 

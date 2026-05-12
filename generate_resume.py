@@ -1,4 +1,14 @@
 """
+DEPRECATED — pipeline now uses routes/pdfRender.js (pure Node, pdfkit) so
+there's no Python dependency on the user's machine. This file is kept as
+reference documentation of the layout spec; the JS port matches it 1:1.
+
+To re-enable Python generation, restore the spawn() calls in
+routes/saveBundle.js — but you'll need reportlab + Pillow for the same
+arch as your python3 interpreter, which is fragile on Apple Silicon.
+
+----- Original docstring follows -----
+
 Resume PDF Generator — exact match to Sahil Mehta's Pages document format.
 
 Spec extracted from original PDF:
@@ -184,15 +194,47 @@ class ResumeWriter:
         self.advance(LINE_H)
 
     def draw_skills_line(self, label, value):
-        """Skills line: bold label + roman value on same line."""
+        """
+        Skills line: bold label + roman value on same line.
+        Wraps long values with a hanging indent at the value-start position so
+        wrapped text aligns under the value, not under the label.
+        """
         self._check_page_break(LINE_H)
         label_text = label + ": "
         label_w = self._text_width(label_text, FONT_BOLD, FONT_SIZE)
+        value_x = CONTENT_X + label_w
+        max_w = PAGE_W - MARGIN_R - value_x
+
+        # Greedy word-wrap of value at max_w.
+        words = value.split()
+        lines = []
+        current = []
+        for word in words:
+            test = " ".join(current + [word])
+            if self._text_width(test, FONT_NORMAL, FONT_SIZE) <= max_w:
+                current.append(word)
+            else:
+                if current:
+                    lines.append(" ".join(current))
+                current = [word]
+        if current:
+            lines.append(" ".join(current))
+        if not lines:
+            lines = [""]
+
+        # First line: bold label at left, value at value_x.
         self.c.setFont(FONT_BOLD, FONT_SIZE)
         self.c.drawString(CONTENT_X, self._y_pt(), label_text)
         self.c.setFont(FONT_NORMAL, FONT_SIZE)
-        self.c.drawString(CONTENT_X + label_w, self._y_pt(), value)
+        self.c.drawString(value_x, self._y_pt(), lines[0])
         self.advance(LINE_H)
+
+        # Continuation lines: hanging indent at value_x.
+        for line in lines[1:]:
+            self._check_page_break(LINE_H)
+            self.c.setFont(FONT_NORMAL, FONT_SIZE)
+            self.c.drawString(value_x, self._y_pt(), line)
+            self.advance(LINE_H)
 
     def save(self):
         self.c.save()

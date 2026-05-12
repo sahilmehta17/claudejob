@@ -118,21 +118,21 @@ test('rejects very short input', () => {
 });
 
 test('detects banned phrase: leveraged', () => {
-  const resume = RESUME_BASE.replace('Led end-to-end', 'Leveraged end-to-end');
+  const resume = RESUME_BASE.replace('Built an AI assistant', 'Leveraged end-to-end');
   const result = validateResumeOutput(resume);
   assert.ok(result.bannedFound.includes('leveraged'));
   assert.strictEqual(result.valid, false);
 });
 
 test('detects banned phrase: spearheaded', () => {
-  const resume = RESUME_BASE.replace('Led end-to-end', 'Spearheaded end-to-end');
+  const resume = RESUME_BASE.replace('Built an AI assistant', 'Spearheaded end-to-end');
   const result = validateResumeOutput(resume);
   assert.ok(result.bannedFound.includes('spearheaded'));
 });
 
 test('detects multiple banned phrases', () => {
   let resume = RESUME_BASE;
-  resume = resume.replace('Led end-to-end', 'Leveraged cutting-edge');
+  resume = resume.replace('Built an AI assistant', 'Leveraged cutting-edge');
   const result = validateResumeOutput(resume);
   assert.ok(result.bannedFound.length >= 2, `Expected >=2 banned, got: ${result.bannedFound}`);
 });
@@ -165,6 +165,69 @@ test('preserves validity when source numbers are kept', () => {
   // Base resume already has all source numbers — should be valid
   const result = validateResumeOutput(RESUME_BASE);
   assert.ok(!result.warnings.some(w => w.includes('fabrication')));
+});
+
+// Narrative-before-jargon heuristic
+const NARRATIVE_BASE = `EDUCATION
+University of Wisconsin, Madison
+PROFESSIONAL EXPERIENCE
+Software Developer, Enidus USA LLC.
+SKILLS
+Languages: Python, TypeScript, T-Mobile, GSPANN, Orahi, Denari
+`;
+
+test('flags bullet that leads with stacked tech jargon', () => {
+  const bad = NARRATIVE_BASE + `
+• Architected a production NL-to-SQL AI assistant using FastAPI, GPT-4o-mini, Pydantic, and Qdrant for live telecom data.
+`;
+  const result = validateResumeOutput(bad);
+  assert.ok(
+    result.warnings.some(w => w.startsWith('Bullet leads with tech jargon')),
+    'expected jargon-lead warning, got: ' + result.warnings.join(' | ')
+  );
+  assert.strictEqual(result.valid, false);
+});
+
+test('does NOT flag bullet that leads with user outcome (tech in trailing fragment)', () => {
+  const good = NARRATIVE_BASE + `
+• Built a production AI assistant for T-Mobile's portal that lets account admins ask plain-English questions about their accounts. FastAPI, GPT-4o-mini, Qdrant.
+`;
+  const result = validateResumeOutput(good);
+  assert.ok(
+    !result.warnings.some(w => w.startsWith('Bullet leads with tech jargon')),
+    'unexpected jargon-lead warning: ' + result.warnings.join(' | ')
+  );
+});
+
+test('does NOT flag bullet with tech inside parens (parens are explicit trailing detail)', () => {
+  const good = NARRATIVE_BASE + `
+• Built and deployed a full-stack RAG system (TypeScript, TimescaleDB, Docker, S3, OpenAI APIs) processing 22K+ documents.
+`;
+  const result = validateResumeOutput(good);
+  assert.ok(
+    !result.warnings.some(w => w.startsWith('Bullet leads with tech jargon')),
+    'unexpected jargon-lead warning: ' + result.warnings.join(' | ')
+  );
+});
+
+test('flags FastAPI/Python-style slash compound when stacked at the lead', () => {
+  const bad = NARRATIVE_BASE + `
+• Architected a FastAPI/Python backend with React 19 + TypeScript + Vite + Tailwind frontend for the copilot.
+`;
+  const result = validateResumeOutput(bad);
+  assert.ok(
+    result.warnings.some(w => w.startsWith('Bullet leads with tech jargon')),
+    'expected jargon-lead warning, got: ' + result.warnings.join(' | ')
+  );
+});
+
+test('base resume passes the jargon-lead check', () => {
+  const result = validateResumeOutput(RESUME_BASE);
+  assert.ok(
+    !result.warnings.some(w => w.startsWith('Bullet leads with tech jargon')),
+    'base resume should not trigger jargon-lead warning, got: ' +
+      result.warnings.filter(w => w.startsWith('Bullet leads')).join(' | ')
+  );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -206,7 +269,7 @@ test('empty lines are skipped', () => {
 });
 
 test('diff with real resume has reasonable output', () => {
-  const modified = RESUME_BASE.replace('Led end-to-end', 'Directed end-to-end');
+  const modified = RESUME_BASE.replace('Built an AI assistant', 'Directed end-to-end');
   const diff = generateResumeDiff(RESUME_BASE, modified);
   const added = diff.filter(d => d.type === 'added');
   const removed = diff.filter(d => d.type === 'removed');
@@ -244,6 +307,119 @@ test('base resume does not contain any banned phrases', () => {
 // Tracker sanitization (import from server)
 // ─────────────────────────────────────────────────────────────────────────────
 // Note: server.js sanitizeTrackerEntry is not exported, so we test via HTTP in integration tests
+
+// ─────────────────────────────────────────────────────────────────────────────
+// resumeContent: renderResumeText + applyAdjacency
+// ─────────────────────────────────────────────────────────────────────────────
+const {
+  RESUME_BASE_JSON,
+  renderResumeText,
+  applyAdjacency,
+  ADJACENCY_MAP,
+  extractUserSkills,
+} = require('../routes/resumeContent');
+
+console.log('\nresumeContent:');
+
+test('RESUME_BASE_JSON has required top-level keys', () => {
+  assert.ok(RESUME_BASE_JSON.name);
+  assert.ok(Array.isArray(RESUME_BASE_JSON.contact));
+  assert.ok(Array.isArray(RESUME_BASE_JSON.sections));
+  assert.ok(RESUME_BASE_JSON.sections.length >= 4);
+});
+
+test('renderResumeText produces text with all expected sections', () => {
+  const text = renderResumeText(RESUME_BASE_JSON);
+  assert.ok(text.includes('EDUCATION'));
+  assert.ok(text.includes('PROFESSIONAL EXPERIENCE'));
+  assert.ok(text.includes('PROJECTS'));
+  assert.ok(text.includes('TECHNICAL SKILLS'));
+  assert.ok(text.includes('Sahil Mehta'));
+});
+
+test('renderResumeText output passes the existing validator', () => {
+  const text = renderResumeText(RESUME_BASE_JSON);
+  const v = validateResumeOutput(text);
+  // No banned phrases, no jargon-led bullets — base is clean.
+  assert.strictEqual(v.bannedFound.length, 0,
+    'base text has banned phrases: ' + v.bannedFound.join(', '));
+  assert.ok(!v.warnings.some(w => w.startsWith('Bullet leads with tech jargon')),
+    'base text triggered jargon-lead warning: ' +
+    v.warnings.filter(w => w.startsWith('Bullet leads')).join(' | '));
+});
+
+test('extractUserSkills pulls comma-separated tokens lowercased', () => {
+  const skills = extractUserSkills(RESUME_BASE_JSON);
+  assert.ok(skills.has('python'));
+  assert.ok(skills.has('javascript/typescript'));
+  assert.ok(skills.has('flask'));
+  assert.ok(skills.has('docker'));
+});
+
+test('applyAdjacency adds JD-required skill when adjacency match exists', () => {
+  // JD requires FastAPI; user has Flask (in ADJACENCY_MAP['fastapi']).
+  // BUT the base resume already lists FastAPI, so we test with a skill
+  // we know isn't on the base.
+  const trimmed = JSON.parse(JSON.stringify(RESUME_BASE_JSON));
+  // Strip Vue-adjacent things from base for a clean test.
+  const result = applyAdjacency(trimmed, ['Pinecone']);
+  // Pinecone has Qdrant in its adjacency list and user has Qdrant → should add.
+  assert.strictEqual(result.added.length, 1);
+  assert.strictEqual(result.added[0].skill, 'Pinecone');
+  assert.strictEqual(result.added[0].justifiedBy.toLowerCase(), 'qdrant');
+  const skillsValues = result.json.sections.find(s => s.type === 'skills').items
+    .map(i => i.value).join(' ');
+  assert.ok(skillsValues.includes('Pinecone'));
+});
+
+test('applyAdjacency does NOT add a skill with no adjacency match', () => {
+  // Cobol is nowhere in ADJACENCY_MAP — must not be added even though we listed it.
+  const result = applyAdjacency(RESUME_BASE_JSON, ['COBOL']);
+  assert.strictEqual(result.added.length, 0);
+});
+
+test('applyAdjacency skips skills already on the resume', () => {
+  // Python is already in user skills; nothing should be added even if listed.
+  const result = applyAdjacency(RESUME_BASE_JSON, ['Python']);
+  assert.strictEqual(result.added.length, 0);
+});
+
+test('applyAdjacency does not duplicate when called repeatedly', () => {
+  const r1 = applyAdjacency(RESUME_BASE_JSON, ['Pinecone']);
+  const r2 = applyAdjacency(r1.json, ['Pinecone']);
+  assert.strictEqual(r2.added.length, 0,
+    'second pass should not re-add');
+});
+
+test('ADJACENCY_MAP keys are all lowercase', () => {
+  for (const k of Object.keys(ADJACENCY_MAP)) {
+    assert.strictEqual(k, k.toLowerCase(), `key "${k}" must be lowercase`);
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// saveBundle: folder name + slug helpers (no actual disk I/O in tests)
+// ─────────────────────────────────────────────────────────────────────────────
+const { slug, buildFolderName } = require('../routes/saveBundle');
+
+console.log('\nsaveBundle:');
+
+test('slug strips spaces and special chars', () => {
+  assert.strictEqual(slug('David Joseph & Company'), 'David-Joseph-Company');
+  assert.strictEqual(slug('CollectWise!@#'), 'CollectWise');
+});
+
+test('slug handles empty/null', () => {
+  assert.strictEqual(slug(''), 'unknown');
+  assert.strictEqual(slug(null), 'unknown');
+});
+
+test('buildFolderName combines company, title, timestamp', () => {
+  const name = buildFolderName('CollectWise', 'AI Agent Engineer');
+  assert.ok(name.startsWith('CollectWise_AI-Agent-Engineer_'));
+  assert.ok(/_\d{4}-\d{2}-\d{2}-\d{4}$/.test(name),
+    `name should end with timestamp: ${name}`);
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Summary

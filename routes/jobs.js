@@ -313,19 +313,11 @@ async function fetchFromJSearch(query, location, datePeriod, remoteOnly, opts = 
     params.set('remote_jobs_only', 'true');
   }
 
-  // Experience filter — JSearch supports server-side filtering via job_requirements.
-  // Valid values: under_3_years_experience, more_than_3_years_experience,
-  // no_experience, no_degree. Multiple comma-separated.
-  // We map the UI options to the closest server-side filter, then post-filter
-  // for tighter control (the JSearch buckets are coarse).
-  if (opts.expLevel === 'junior_only') {
-    params.set('job_requirements', 'no_experience,under_3_years_experience');
-  } else if (opts.expLevel === 'under_3') {
-    params.set('job_requirements', 'no_experience,under_3_years_experience');
-  } else if (opts.expLevel === 'under_5') {
-    // Under 5 has no direct bucket — request under_3 + accept post-filter top-up
-    params.set('job_requirements', 'no_experience,under_3_years_experience');
-  }
+  // NOTE: we intentionally do NOT pass JSearch's job_requirements param.
+  // It restricts to listings JSearch has explicitly tagged with an experience
+  // bucket, and the vast majority of listings aren't tagged at all — so
+  // server-side filtering kills ~80% of legitimate junior-friendly roles
+  // before they reach us. We post-filter on title + parsed JD years instead.
 
   const url = `${JSEARCH_BASE}?${params.toString()}`;
 

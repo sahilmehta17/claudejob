@@ -251,12 +251,13 @@ STRICT RULES — violations will cause rejection:
    - Change the format, section headers, or structure
 
 LAYOUT CONSTRAINTS (hard requirements — output is rejected if violated):
-- The tailored resume MUST fit on exactly 1 page (A4, 17pt margins, Times-Roman 11pt, 13pt line height). Total bullet character count across all sections combined should not exceed ~3200 characters.
-- Each bullet must be between 18 and 32 words. Shorter bullets are fine; longer bullets are rejected.
+- The tailored resume MUST FILL exactly 1 page (A4, 17pt margins, Times-Roman 11pt, 13pt line height). A half-page or 3/4-page output is just as broken as a 2-page output — the full page must be used. Target ~4000-4800 characters of bullet content combined across all sections; anything under 3500 is too sparse and gets rejected.
+- PRESERVE every role, internship, and project from the base resume. Do NOT drop entire roles (e.g., GSPANN, Orahi) or subsections. Reorder is fine; deletion is not.
+- PRESERVE bullet count per subsection. Tighten wording inside a bullet if needed; do not silently drop bullets. Dropping a bullet is acceptable ONLY if keeping it would force overflow to page 2.
+- Each bullet should be 20-35 words. Bullets under 15 words read as filler and get rejected. Bullets over 40 words wrap to too many lines.
 - NEVER write a bullet whose final rendered line will contain fewer than 4 words (a "widow line"). Specifically: avoid sentences that end with a short clause like "from days to minutes." or "stored Excel passwords." which would wrap such that the period falls alone on a final line. Instead, either tighten the sentence so it ends mid-line, or pad the final clause so the last line has 4+ words.
-- If a base bullet is already widow-safe and at the word ceiling, prefer leaving it unchanged over rewriting.
-- If tailoring would push the resume over 1 page, prefer CUTTING low-relevance bullets (e.g. interning roles that don't match the JD) over shortening high-relevance ones. Total bullet count can drop; bullet quality cannot.
-- For the Skills section: keep section labels and ordering matched to the JD priority, but the entire Skills section should fit in 4-6 lines total (≤ ~600 characters including labels).
+- For the Skills section: keep ALL skill categories from the base resume. The section should occupy 4-7 lines total.
+- If your tailored output would push past 1 page, TIGHTEN wording inside bullets rather than dropping content. Cutting bullets or roles is a LAST resort, not the first move. The failure mode this brief is fixing is half-page output, not overflow — err toward keeping content.
 
 4. TONE: Write like a competent engineer describing what they built FOR USERS, not like a developer listing what they used. Concrete, specific, plain language. Lead with outcomes; let stack lists trail.
 

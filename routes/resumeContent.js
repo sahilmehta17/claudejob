@@ -9,6 +9,29 @@
 
 const PHONE = process.env.RESUME_PHONE || '608-960-5508';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CANDIDATE_FACTS — single source of truth for facts the AI prompts cite.
+//
+// Both the cover letter prompt and Q&A prompt in routes/ai.js interpolate this
+// constant. When the resume content changes, edit this string AND update the
+// corresponding bullets in RESUME_BASE_JSON. Both must stay in sync.
+//
+// Discovered after §9.3 (April 2026) and again 2026-05-11: the prompts
+// hardcoded stats that had been trimmed from the resume. Centralizing the
+// facts here makes drift visible as a single-file diff.
+// ─────────────────────────────────────────────────────────────────────────────
+const CANDIDATE_FACTS = `
+- B.S. Computer Science + B.S. Data Science, UW-Madison (graduated May 2025; ~1 year full-time experience since)
+- Full-time SWE at Enidus USA LLC (June 2025 - present): sole engineer on three plugins for T-Mobile for Business enterprise portal
+- Plugin 1 — Agentic AI Copilot: 53 intents, 43 Pydantic-typed tool handlers, stage-and-confirm safety pattern (every write requires user approval), 52 pytest cases parametrized to 400+ invocations, zero LLM-hallucination incidents in pilot with 15 reseller tenants / 25+ enterprise customers / 100+ daily portal users. Stack: FastAPI, Python, Qdrant per-tenant collections, Claude / GPT-4 function-calling, PostgreSQL with row-level security, 8-role RBAC.
+- Plugin 2 — Custom Reports & Dashboards: full-stack self-serve analytics product built end-to-end alone. React + Vite frontend, Node.js + Express backend, SQL Server with stored procedures. Hardened via stored-procedure CRUD contracts, two-layer filter validation, runtime tenant-clause injection, JWT + per-session CSRF, strict CSP, AES-256-CBC encryption.
+- Plugin 3 — Carrier API Gateway (BFF): Node.js + Express, OAuth + per-request PoP token generation, sole integration layer to T-Mobile carrier APIs.
+- RAG capstone (UW-Madison, Jan-May 2025): 22K+ documents, 300K+ embeddings, hybrid retrieval (BM25 + TF-IDF) with semantic re-ranking, 73% QA accuracy, 40% query-latency reduction. Stack: TypeScript, TimescaleDB, Docker, S3, OpenAI APIs. Led Agile delivery of 25+ production features.
+- Orahi internship (Jul-Aug 2024): K-means clustering algorithm for dynamic bus route adjustment, 80% reduction in manual student-assignment effort. Flask REST APIs for telemetry ingestion.
+- GSPANN internship (Jun-Aug 2023): CNN-based pneumonia detection on chest X-rays; iterated on preprocessing and data augmentation to improve generalization.
+- Core skills: Python, TypeScript, JavaScript, FastAPI, Node.js, Express, React, Anthropic Claude, OpenAI APIs, tool calling, RAG, Qdrant, Pydantic, PostgreSQL, SQL, Docker, AWS S3, PyTorch, JWT/OAuth, RBAC, streaming/SSE.
+`.trim();
+
 const RESUME_BASE_JSON = {
   name: 'Sahil Mehta',
   // Contact items can be plain strings or { text, url } objects (renderers
@@ -350,6 +373,7 @@ function applyAdjacency(jsonResume, jdRequiredSkills) {
 
 module.exports = {
   RESUME_BASE_JSON,
+  CANDIDATE_FACTS,
   renderResumeText,
   ADJACENCY_MAP,
   applyAdjacency,

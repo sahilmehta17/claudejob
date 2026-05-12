@@ -40,3 +40,6 @@ Thumbs.db
 
 # Stale cowork setup notes (superseded by README.md)
 COWORK_SETUP.md
+
+# Editor / refactor backups
+*.bak

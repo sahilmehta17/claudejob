@@ -316,6 +316,19 @@ class ResumeWriter {
         `brevity guidance, or fall back to RESUME_BASE_JSON.`
       );
     }
+    // Soft guard: warn on underfill. The "1 page" rule cuts both ways — a
+    // half-page resume looks just as broken as a 2-page one. Log a warning
+    // when page 1 is less than 70% used so prompt regressions surface.
+    const usable = R.PAGE_H - R.MARGIN_T - R.MARGIN_B;
+    const used = this.y - R.MARGIN_T;
+    const fillPct = used / usable;
+    if (fillPct < 0.7) {
+      console.warn(
+        `[pdfRender] underfill: tailored resume only used ${(fillPct * 100).toFixed(0)}% of page 1 ` +
+        `(${used.toFixed(0)}pt of ${usable}pt). LLM likely dropped roles/bullets it shouldn't have. ` +
+        `Re-run or check the tailoring prompt's "preserve all content" constraint.`
+      );
+    }
     return new Promise((resolve, reject) => {
       this.doc.end();
       this.stream.on('finish', () => resolve(this.outPath));

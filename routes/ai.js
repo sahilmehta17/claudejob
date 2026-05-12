@@ -459,10 +459,10 @@ RULES:
 
 CANDIDATE FACTS (use ONLY these — do not invent):
 - CS + Data Science grad UW-Madison 2025
-- Full-time SWE at Enidus: Node.js BFF for T-Mobile APIs (OAuth/PoP auth), multi-tenant RBAC reporting, RAG AI chatbot (FastAPI/Qdrant/GPT-4o-mini, 3-layer security, 8 RBAC roles, 52 pytest tests)
+- Full-time SWE at Enidus: Node.js BFF for T-Mobile APIs (OAuth/PoP auth), multi-tenant RBAC reporting, RAG AI chatbot (FastAPI/Qdrant/GPT-4o-mini, 3-layer security, 8 RBAC roles, 52 pytest cases parametrized to 400+ invocations)
 - RAG capstone: 22K docs, 300K+ embeddings, 73% accuracy, 40% latency reduction, 25+ features
-- Orahi: 80% manual effort reduction, 15% latency improvement
-- GSPANN: 97% CNN accuracy
+- Orahi: 80% manual student-assignment effort reduction via K-means clustering, Flask REST APIs
+- GSPANN: CNN-based pneumonia detection on chest X-rays; iterated on preprocessing and data augmentation
 
 QUESTIONS:
 ${defaultQs.map((q, i) => `${i + 1}. ${q}`).join('\n')}

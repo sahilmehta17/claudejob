@@ -83,8 +83,8 @@ const RESUME_BASE_JSON = {
                 "Built an AI assistant for T-Mobile for Business enabling natural-language queries over telecom account data plus multi-step account actions (device purchase, line suspension, plan upgrades); currently in pilot with 15 reseller tenants representing 25+ enterprise customers and 100+ daily portal users.",
                 "Built an agentic workflow that stages each transaction in an inline panel for user confirmation before backend execution; agent orchestration without autonomous write access.",
                 "Built a parametrized pytest eval suite (52 hand-designed cases fanning out to 400+ distinct test invocations) covering intent dispatch, planning, and execution; caught the agent hallucinating tool arguments (non-existent device SKUs, malformed BANs) early in development.",
-                "Prevented hallucinated tool calls in production via Pydantic-validated tool schemas + strict tool gating (LLM constrained to tool selection only, never raw SQL).",
-                "Enforced safe execution via parameterized SQL templates, session-scoped row-level security, and 8-role RBAC; Qdrant knowledge base with per-tenant isolation.",
+                "Built defense-in-depth safety: Pydantic-validated tool schemas + strict tool gating at the LLM boundary (model constrained to tool selection only, never raw SQL), then parameterized SQL templates + session-scoped row-level security + 8-role RBAC at the execution boundary, with per-tenant Qdrant collections for retrieval isolation.",
+                "Designed hybrid retrieval pipeline (Qdrant vector + BM25 + Reciprocal Rank Fusion); led routing-architecture pivot lexical-first → vector-first for consumer-facing paraphrase tolerance.",
               ],
             },
             {

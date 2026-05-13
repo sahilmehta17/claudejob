@@ -443,7 +443,8 @@ RULES:
 - Name the company and role specifically
 - End with a direct, confident call to action
 - DO NOT fabricate any claim, metric, or experience not listed above
-- Return ONLY the letter body (no date, no header, no "Dear Hiring Manager")`;
+- Return ONLY the letter body (no date, no header, no "Dear Hiring Manager")
+- If the TARGET company is in a regulated-enterprise domain (financial services, banking, telecom, healthcare, insurance, government, fintech, regtech, compliance tech), explicitly highlight in one body paragraph that the candidate has shipped production AI against regulated enterprise data (T-Mobile billing accounts, device identifiers, line state transitions, multi-tenant reseller hierarchies, audit-traceable state-mutating operations). This is a 0-3yr engineer differentiator — most candidates at this level have only touched toy datasets. Do NOT include this paragraph if the TARGET is a pure AI-research shop or general-purpose tooling company where regulated-data experience isn't load-bearing.`;
 
     let coverText = '';
     await streamText(coverPrompt, 900, (chunk) => {
@@ -479,7 +480,8 @@ RULES:
 - Never fabricate claims or metrics
 - Tailor to ${job.company} specifically
 - Return valid JSON array: [{"q":"...","a":"..."}]
-- Return ONLY valid JSON. No markdown fences, no commentary.`;
+- Return ONLY valid JSON. No markdown fences, no commentary.
+- For questions about your background or fit, if the company is in a regulated-enterprise domain (financial services, telecom, healthcare, insurance, government, fintech), explicitly note the candidate's production experience with regulated enterprise data — billing data, customer identifiers, audit-traceable transactions, multi-tenant reseller hierarchies. This is rare experience at the 0-3yr level and a real differentiator for these domains.`;
 
     let qaRaw = '';
     await streamText(qaPrompt, 1800, (chunk) => {

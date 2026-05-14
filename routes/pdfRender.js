@@ -11,6 +11,14 @@
 const fs = require('fs');
 const PDFDocument = require('pdfkit');
 
+// Unicode non-breaking space (U+00A0). pdfkit's Times-Roman uses WinAnsi
+// encoding which maps NBSP to 0xA0, so it renders as a visible space-width
+// glyph. Used by preventWidow() to glue the last 3 words of a bullet into a
+// single unbreakable token. WORD_SPLIT deliberately excludes NBSP so our
+// wrap/measure helpers treat NBSP-joined runs as one token.
+const NBSP = ' ';
+const WORD_SPLIT = /[ \t\r\n\f\v]+/;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Resume — A4, tight margins, dense layout matching Sahil's Pages template.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +55,9 @@ const R = {
 // the measurement matches drawBullet's _wrap exactly regardless of caller state.
 function predictLastLine(doc, text, fontSize, maxWidth) {
   doc.font(R.FONT_NORMAL).fontSize(fontSize);
-  const words = String(text).split(/\s+/).filter(Boolean);
+  // WORD_SPLIT excludes NBSP, so NBSP-joined runs stay as a single token —
+  // matching the way preventWidow() forces the last 3 words to wrap as a unit.
+  const words = String(text).split(WORD_SPLIT).filter(Boolean);
   let currentLine = '';
   let lastLine = '';
   for (const word of words) {
@@ -66,6 +76,40 @@ function predictLastLine(doc, text, fontSize, maxWidth) {
 
 function isWidow(lastLine) {
   return lastLine.split(/\s+/).filter(Boolean).length < 4;
+}
+
+// Active widow guard. If the last line of a bullet would render with fewer
+// than 3 visual words, replace the last two ASCII spaces with NBSP so pdfkit
+// (and our wrap helpers) treat the last 3 words as one unbreakable token.
+// Either the full 3-word phrase fits on the previous line, or the whole
+// phrase wraps to a new line together — never 1 or 2 words alone.
+function preventWidow(text, doc, fontSize, maxWidth) {
+  const src = String(text);
+  // Use ASCII-only split here so a text already containing NBSP still counts
+  // its visual words correctly (we only need a ballpark to skip very short
+  // strings).
+  const words = src.split(WORD_SPLIT).filter(Boolean);
+  if (words.length < 4) return src;
+
+  const lastLine = predictLastLine(doc, src, fontSize, maxWidth);
+  const lastLineWords = lastLine.split(/\s+/).filter(Boolean);
+  if (lastLineWords.length >= 3) return src;
+
+  // Find the last two ASCII spaces and swap them for NBSP. lastIndexOf
+  // ignores any NBSPs already present, so calling preventWidow on text that
+  // already contains NBSPs simply extends the no-break group further back.
+  const lastSpace = src.lastIndexOf(' ');
+  if (lastSpace < 0) return src;
+  const secondLastSpace = src.lastIndexOf(' ', lastSpace - 1);
+  if (secondLastSpace < 0) return src;
+
+  return (
+    src.slice(0, secondLastSpace) +
+    NBSP +
+    src.slice(secondLastSpace + 1, lastSpace) +
+    NBSP +
+    src.slice(lastSpace + 1)
+  );
 }
 
 class ResumeWriter {
@@ -235,13 +279,18 @@ class ResumeWriter {
 
   drawBullet(text) {
     const maxW = R.PAGE_W - R.MARGIN_R - R.BULLET_TEXT_X;
-    const lastLine = predictLastLine(this.doc, text, R.BODY_SIZE, maxW);
-    if (isWidow(lastLine)) {
-      const wc = lastLine.split(/\s+/).filter(Boolean).length;
-      console.warn(`[pdfRender] widow detected: bullet ends with "${lastLine}" (${wc} words on last line)`);
+    // Active widow guard. preventWidow returns the original text unchanged if
+    // it's already widow-safe, otherwise NBSP-joins the last 3 words so they
+    // wrap as a unit. Warn only if the fix can't succeed (e.g., 3-word group
+    // too long for one line) \u2014 should be near-zero on a well-tuned base.
+    const safeText = preventWidow(text, this.doc, R.BODY_SIZE, maxW);
+    const lastLine = predictLastLine(this.doc, safeText, R.BODY_SIZE, maxW);
+    const wc = lastLine.split(/\s+/).filter(Boolean).length;
+    if (wc < 3) {
+      console.warn(`[pdfRender] widow remains after NBSP fix: bullet ends with "${lastLine}" (${wc} words on last line)`);
       console.warn(`[pdfRender] full bullet: ${String(text).slice(0, 100)}...`);
     }
-    const lines = this._wrap(text, R.FONT_NORMAL, R.BODY_SIZE, maxW);
+    const lines = this._wrap(safeText, R.FONT_NORMAL, R.BODY_SIZE, maxW);
     for (let i = 0; i < lines.length; i++) {
       this._checkBreak(R.LINE_H);
       if (i === 0) {
@@ -286,7 +335,9 @@ class ResumeWriter {
   }
 
   _wrap(text, font, size, maxW) {
-    const words = String(text).split(/\s+/).filter(Boolean);
+    // WORD_SPLIT excludes NBSP so any NBSP-joined run (from preventWidow)
+    // becomes a single token and stays on one line as a unit.
+    const words = String(text).split(WORD_SPLIT).filter(Boolean);
     const lines = [];
     let current = [];
     for (const word of words) {

@@ -240,6 +240,14 @@ Before generating the tailored resume, classify the TARGET role's primary focus 
 
 Classify based on the JD's bullet density — count how many JD bullets describe each area, pick the dominant one. The classification drives the SUBSECTION REORDERING and BULLET ORDERING rules below.
 
+TIEBREAKER FOR HYBRID-FLAVOR TITLES:
+If the JD title contains AI keywords (AI, ML, LLM, GenAI, Agentic, Intelligent) BUT primarily describes one of the other focus areas in the body, classify based on the BODY, not the title. Specifically:
+  - "Frontend Engineer" / "UI Engineer" / "Mobile Engineer" / "Web Developer" / "Web Engineer" in the title (with or without AI qualifier) → classify as 'frontend' UNLESS the body explicitly says >50% of the work is on AI/ML infrastructure (model serving, vector DB ops, agent orchestration as primary).
+  - "Backend Engineer" / "Platform Engineer" / "Infrastructure Engineer" in the title (with or without AI qualifier) → classify as 'backend' under the same rule.
+  - "AI Experiences" / "AI Features" / "AI Platform" / "Intelligent X" qualifier in a frontend/backend title means "this team builds AI-flavored features" — the engineering work itself is still frontend/backend.
+  - 'ai_infra' is reserved for roles where the JD body describes BUILDING the AI/ML platform itself (LLM serving, RAG indexing, agent runtimes, evaluation harnesses) as primary work.
+  - When in doubt between two buckets, weight by the "WHAT YOU'LL DO" section: count keywords for each area (frontend: React, UI, mobile, accessibility, components; backend: services, databases, APIs, scaling; ai_infra: LLM, RAG, agents, MLOps, eval harness).
+
 STRICT RULES — violations will cause rejection:
 
 1. PRESERVE ALL FACTS EXACTLY. Every number, percentage, metric, date, company name, tool name, and claim must come directly from the source resume. Do not round, approximate, inflate, or invent any number or claim.

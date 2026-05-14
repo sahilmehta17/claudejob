@@ -130,6 +130,10 @@ class ResumeWriter {
       },
       opts.gaps || {}
     );
+    // Per-render line height. Defaults to R.LINE_H so unaltered callers
+    // behave identically; the underfill adjuster bumps this by up to
+    // MAX_LINE_H_BUMP when gap expansion alone can't reach TARGET_FILL_PCT.
+    this.lineH = typeof opts.lineH === 'number' ? opts.lineH : R.LINE_H;
     // bufferPages: true keeps every page in _pageBuffer until doc.end() flushes
     // it. Without this, pdfkit flushes each page on addPage() and
     // bufferedPageRange() always reports count: 1, defeating the overflow guard.
@@ -150,7 +154,7 @@ class ResumeWriter {
     this.y = R.MARGIN_T + R.BODY_SIZE; // baseline of first line
   }
 
-  _checkBreak(needed = R.LINE_H) {
+  _checkBreak(needed = this.lineH) {
     if (this.y + needed > R.PAGE_H - R.MARGIN_B) {
       this.doc.addPage({ size: [R.PAGE_W, R.PAGE_H], margins: { top: 0, bottom: 0, left: 0, right: 0 } });
       this.y = R.MARGIN_T + R.BODY_SIZE;
@@ -169,12 +173,12 @@ class ResumeWriter {
     this.doc.text(text, x, topY, { lineBreak: false });
   }
 
-  advance(pts = R.LINE_H) {
+  advance(pts = this.lineH) {
     this.y += pts;
   }
 
   drawName(name) {
-    this._checkBreak(R.GAP_NAME_CONTACT + R.LINE_H);
+    this._checkBreak(R.GAP_NAME_CONTACT + this.lineH);
     this.doc.font(R.FONT_BOLD).fontSize(R.NAME_SIZE);
     const w = this.doc.widthOfString(name);
     const x = (R.PAGE_W - w) / 2;
@@ -218,36 +222,36 @@ class ResumeWriter {
       }
       x += itemW;
     }
-    this.advance(R.LINE_H);
+    this.advance(this.lineH);
   }
 
   drawSummary(text) {
     // Italic positioning summary, full-width, after contact line.
     if (!text) return;
-    this._checkBreak(R.LINE_H * 3);
+    this._checkBreak(this.lineH * 3);
     const maxW = R.PAGE_W - R.MARGIN_L - R.MARGIN_R;
     const lines = this._wrap(text, R.FONT_ITALIC, R.BODY_SIZE, maxW);
     for (const line of lines) {
-      this._checkBreak(R.LINE_H);
+      this._checkBreak(this.lineH);
       this._drawAt(R.CONTENT_X, this.y, line, R.FONT_ITALIC, R.BODY_SIZE);
-      this.advance(R.LINE_H);
+      this.advance(this.lineH);
     }
   }
 
   drawSeparator() {
-    this._checkBreak(R.LINE_H * 2);
+    this._checkBreak(this.lineH * 2);
     this._drawAt(R.CONTENT_X, this.y, R.SEPARATOR, R.FONT_NORMAL, R.BODY_SIZE);
-    this.advance(R.LINE_H);
+    this.advance(this.lineH);
   }
 
   drawSectionHeader(text) {
-    this._checkBreak(R.LINE_H);
+    this._checkBreak(this.lineH);
     this._drawAt(R.CONTENT_X, this.y, text, R.FONT_BOLD, R.BODY_SIZE);
-    this.advance(R.LINE_H);
+    this.advance(this.lineH);
   }
 
   drawJobHeader(titleLeft, dateRight, locationRight, linkUrl) {
-    this._checkBreak(R.LINE_H);
+    this._checkBreak(this.lineH);
     this._drawAt(R.CONTENT_X, this.y, titleLeft, R.FONT_BOLD, R.BODY_SIZE);
 
     // Optional clickable "(Github)" suffix for projects with a public repo.
@@ -288,14 +292,14 @@ class ResumeWriter {
       const x = R.PAGE_W - R.MARGIN_R - w;
       this._drawAt(x, this.y, dateRight, R.FONT_ITALIC, R.BODY_SIZE);
     }
-    this.advance(R.LINE_H);
+    this.advance(this.lineH);
   }
 
   drawSubsection(text) {
-    this._checkBreak(this.gaps.subsectionPre + R.LINE_H);
+    this._checkBreak(this.gaps.subsectionPre + this.lineH);
     this.advance(this.gaps.subsectionPre);
     this._drawAt(R.CONTENT_X, this.y, text, R.FONT_BOLD, R.BODY_SIZE);
-    this.advance(R.LINE_H);
+    this.advance(this.lineH);
   }
 
   drawBullet(text) {
@@ -313,18 +317,18 @@ class ResumeWriter {
     }
     const lines = this._wrap(safeText, R.FONT_NORMAL, R.BODY_SIZE, maxW);
     for (let i = 0; i < lines.length; i++) {
-      this._checkBreak(R.LINE_H);
+      this._checkBreak(this.lineH);
       if (i === 0) {
         this._drawAt(R.BULLET_X, this.y, '\u2022', R.FONT_NORMAL, R.BODY_SIZE);
       }
       this._drawAt(R.BULLET_TEXT_X, this.y, lines[i], R.FONT_NORMAL, R.BODY_SIZE);
-      this.advance(R.LINE_H);
+      this.advance(this.lineH);
     }
   }
 
   drawPlain(text, opts = {}) {
     const font = opts.font || R.FONT_NORMAL;
-    this._checkBreak(R.LINE_H);
+    this._checkBreak(this.lineH);
     this._drawAt(R.CONTENT_X, this.y, text, font, R.BODY_SIZE);
     if (opts.rightText) {
       const rFont = opts.rightFont || R.FONT_ITALIC;
@@ -332,11 +336,11 @@ class ResumeWriter {
       const x = R.PAGE_W - R.MARGIN_R - w;
       this._drawAt(x, this.y, opts.rightText, rFont, R.BODY_SIZE);
     }
-    this.advance(R.LINE_H);
+    this.advance(this.lineH);
   }
 
   drawSkillsLine(label, value) {
-    this._checkBreak(R.LINE_H);
+    this._checkBreak(this.lineH);
     const labelText = label + ': ';
     const labelW = this._textWidth(labelText, R.FONT_BOLD, R.BODY_SIZE);
     const valueX = R.CONTENT_X + labelW;
@@ -346,12 +350,12 @@ class ResumeWriter {
 
     this._drawAt(R.CONTENT_X, this.y, labelText, R.FONT_BOLD, R.BODY_SIZE);
     this._drawAt(valueX, this.y, lines[0], R.FONT_NORMAL, R.BODY_SIZE);
-    this.advance(R.LINE_H);
+    this.advance(this.lineH);
 
     for (let i = 1; i < lines.length; i++) {
-      this._checkBreak(R.LINE_H);
+      this._checkBreak(this.lineH);
       this._drawAt(valueX, this.y, lines[i], R.FONT_NORMAL, R.BODY_SIZE);
-      this.advance(R.LINE_H);
+      this.advance(this.lineH);
     }
   }
 
@@ -415,18 +419,22 @@ class ResumeWriter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Underfill page distribution — two-pass render.
+// Underfill page distribution — two-pass render with line-height fallback.
 //
-// TARGET_FILL_PCT: aim for this fraction of usable page height when the
-// content is sparse. 0.92 keeps a small bottom margin so a tailored resume
-// never visually crowds the page edge.
+// TARGET_FILL_PCT: aim for this fraction of usable page height. 0.95 matches
+// the BASE resume's natural density so tailored resumes don't look thinner.
 //
 // MAX_GAP_MULTIPLIER: cap on how much a single inter-section gap can grow
-// (relative to R.GAP_SECTION). 2.0 means the section gap can expand up to
-// 26pt extra; anything beyond that starts to look like blank-page padding.
+// (relative to R.GAP_SECTION). 4.0 gives the gap-distribution path enough
+// runway on very sparse tailored resumes before LINE_H expansion kicks in.
+//
+// MAX_LINE_H_BUMP: cap on the per-line height bump used as a fallback when
+// gap expansion alone can't reach TARGET_FILL_PCT. +2pt is the point beyond
+// which the typography reads as padded.
 // ─────────────────────────────────────────────────────────────────────────────
-const TARGET_FILL_PCT = 0.92;
-const MAX_GAP_MULTIPLIER = 2.0;
+const TARGET_FILL_PCT = 0.95;
+const MAX_GAP_MULTIPLIER = 4.0;
+const MAX_LINE_H_BUMP = 2.0;
 
 // Count the gap slots the underfill adjuster can grow: inter-section gaps
 // (sections.length - 1) + post-item gaps for experience/project items. Used
@@ -436,6 +444,39 @@ function countResumeGaps(content) {
   let n = sections.length > 0 ? sections.length - 1 : 0;
   for (const s of sections) {
     if (s.type === 'experience' || s.type === 'projects') {
+      n += (s.items || []).length;
+    }
+  }
+  return n;
+}
+
+// Approximate the total wrapped-line count for the line-height fallback. The
+// division by 80 is a deliberate rough estimate of wrapped lines per bullet —
+// exact precision doesn't matter because the divisor only sets extraPerLine,
+// and the cap (MAX_LINE_H_BUMP) plus the page-overflow guard absorb the rest.
+function countTotalLinesInContent(content) {
+  let n = 0;
+  if (content.name) n += 1;
+  if (content.contact && content.contact.length) n += 1;
+  if (content.summary) n += Math.ceil(String(content.summary).length / 80);
+  for (const s of content.sections || []) {
+    n += 1; // section header
+    if (s.type === 'education') {
+      for (const item of s.items || []) n += 2;
+    } else if (s.type === 'experience') {
+      for (const item of s.items || []) {
+        n += 1; // job header
+        for (const sub of item.subsections || []) {
+          if (sub.name) n += 1;
+          for (const b of sub.bullets || []) n += Math.ceil(String(b).length / 80);
+        }
+      }
+    } else if (s.type === 'projects') {
+      for (const item of s.items || []) {
+        n += 1; // job header
+        for (const b of item.bullets || []) n += Math.ceil(String(b).length / 80);
+      }
+    } else if (s.type === 'skills') {
       n += (s.items || []).length;
     }
   }
@@ -501,38 +542,59 @@ function drawResumeContent(w, content) {
 // the rendered output fills TARGET_FILL_PCT of the page.
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderResumePdf(content, outPath) {
-  // Pass 1: measure baseline content height with a discarded PDF.
-  const measurer = new ResumeWriter(null, { measureOnly: true });
-  drawResumeContent(measurer, content);
-  const usedHeight = measurer.y - R.MARGIN_T;
-  try { measurer.doc.end(); } catch (_) { /* noop sink */ }
+  // Pass A: measure baseline content height with a discarded PDF.
+  const measurerA = new ResumeWriter(null, { measureOnly: true });
+  drawResumeContent(measurerA, content);
+  const usedHeight = measurerA.y - R.MARGIN_T;
+  try { measurerA.doc.end(); } catch (_) { /* noop sink */ }
 
   const pageContentHeight = R.PAGE_H - R.MARGIN_T - R.MARGIN_B;
   const targetHeight = TARGET_FILL_PCT * pageContentHeight;
 
-  // Compute adjusted gaps if (and only if) Pass 1 came in short of target.
+  // Compute adjusted gaps if (and only if) Pass A came in short of target.
   let gaps;
   if (usedHeight < targetHeight) {
     const extra = targetHeight - usedHeight;
     const gapCount = countResumeGaps(content);
     if (gapCount > 0) {
-      // Cap at MAX_GAP_MULTIPLIER * R.GAP_SECTION so extra per slot can't
-      // exceed R.GAP_SECTION (26pt) — beyond that the layout starts looking
-      // like blank-page padding.
+      // Cap at (MAX_GAP_MULTIPLIER - 1) * R.GAP_SECTION so extra per slot
+      // can't exceed 3× R.GAP_SECTION (78pt). Beyond that the layout starts
+      // looking like blank-page padding even with section gaps doing the work.
       const extraPerGap = Math.min(
         extra / gapCount,
         R.GAP_SECTION * (MAX_GAP_MULTIPLIER - 1)
       );
       gaps = {
         section: extraPerGap,
-        postItem: R.GAP_POST_ITEM + extraPerGap * 0.4,
-        subsectionPre: R.GAP_SUBSECTION_PRE + extraPerGap * 0.3,
+        postItem: R.GAP_POST_ITEM + extraPerGap * 0.7,
+        subsectionPre: R.GAP_SUBSECTION_PRE + extraPerGap * 0.6,
       };
     }
   }
 
-  // Pass 2: real render with the (possibly expanded) gaps.
-  const w = new ResumeWriter(outPath, { gaps });
+  // Pass B: simulate height with the expanded gaps. If the gap-distribution
+  // weights still leave the page short of target (subsection weights add up
+  // to < 1.0× per-gap, so very sparse content can't reach 95% on gaps
+  // alone), bump LINE_H by up to MAX_LINE_H_BUMP to close the rest.
+  let lineH;
+  if (gaps) {
+    const measurerB = new ResumeWriter(null, { measureOnly: true, gaps });
+    drawResumeContent(measurerB, content);
+    const projectedHeight = measurerB.y - R.MARGIN_T;
+    try { measurerB.doc.end(); } catch (_) { /* noop sink */ }
+
+    if (projectedHeight < targetHeight) {
+      const stillNeeded = targetHeight - projectedHeight;
+      const lineCount = countTotalLinesInContent(content);
+      if (lineCount > 0) {
+        const extraPerLine = Math.min(MAX_LINE_H_BUMP, stillNeeded / lineCount);
+        if (extraPerLine > 0) lineH = R.LINE_H + extraPerLine;
+      }
+    }
+  }
+
+  // Pass C: real render with the (possibly expanded) gaps and lineH.
+  const w = new ResumeWriter(outPath, { gaps, lineH });
   drawResumeContent(w, content);
   return w.finish();
 }

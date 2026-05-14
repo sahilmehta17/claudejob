@@ -593,10 +593,40 @@ async function renderResumePdf(content, outPath) {
     }
   }
 
-  // Pass C: real render with the (possibly expanded) gaps and lineH.
-  const w = new ResumeWriter(outPath, { gaps, lineH });
-  drawResumeContent(w, content);
-  return w.finish();
+  // Pass B2: re-simulate with BOTH gaps AND the proposed lineH applied. Pass B
+  // measured lineH=13 but Pass C will use the bumped value, so a combined
+  // render can overflow page 1 even when Pass B looked safe. If the combined
+  // projection exceeds the usable page area (with a small safety buffer), back
+  // off the lineH bump to zero — accept slightly lower fill in exchange for a
+  // resume that actually renders.
+  if (gaps && lineH) {
+    const measurerB2 = new ResumeWriter(null, { measureOnly: true, gaps, lineH });
+    drawResumeContent(measurerB2, content);
+    const projectedHeight2 = measurerB2.y - R.MARGIN_T;
+    try { measurerB2.doc.end(); } catch (_) { /* noop sink */ }
+
+    const safeMax = pageContentHeight - 10; // 10pt buffer for kerning/baseline drift
+    if (projectedHeight2 > safeMax) {
+      lineH = undefined; // back off the lineH bump
+    }
+  }
+
+  // Pass C: real render with the (possibly expanded) gaps and lineH. Wrap in
+  // try/catch — if a content shape we didn't anticipate STILL overflows after
+  // Pass B2, retry with default spacing rather than leaving an empty PDF.
+  try {
+    const w = new ResumeWriter(outPath, { gaps, lineH });
+    drawResumeContent(w, content);
+    return await w.finish();
+  } catch (e) {
+    if (String(e.message).includes('Resume overflow')) {
+      console.warn('[pdfRender] tailored render overflowed despite projection; retrying with default spacing');
+      const w2 = new ResumeWriter(outPath, {});
+      drawResumeContent(w2, content);
+      return await w2.finish();
+    }
+    throw e;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

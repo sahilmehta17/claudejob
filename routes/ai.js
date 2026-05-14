@@ -230,6 +230,16 @@ You may modify the values within bullets/skills (per rules below). You MUST pres
   - Item structure (title/date/location/subsections, etc.)
   - All numbers, percentages, dates, company names, and tool names exactly
 
+JD FOCUS DETECTION:
+Before generating the tailored resume, classify the TARGET role's primary focus into ONE of these buckets:
+  - frontend: roles emphasizing React, UI/UX, mobile, accessibility, design systems (e.g., "Frontend Engineer", "UI Engineer", "Mobile Engineer", "Web Developer").
+  - backend: roles emphasizing services, databases, APIs, distributed systems, infrastructure (e.g., "Backend Engineer", "Platform Engineer", "Infrastructure Engineer", "Site Reliability Engineer").
+  - ai_infra: roles emphasizing LLM systems, agents, RAG, vector DBs, MLOps (e.g., "AI Engineer", "ML Engineer", "Applied AI", "Forward Deployed Engineer at AI shop").
+  - fullstack: roles requiring both frontend and backend (e.g., "Software Engineer" with no specialization, "Full-Stack Engineer", "Founding Engineer").
+  - data: roles emphasizing data pipelines, analytics, modeling, statistics (e.g., "Data Engineer", "Data Scientist", "ML Engineer with pipeline focus").
+
+Classify based on the JD's bullet density — count how many JD bullets describe each area, pick the dominant one. The classification drives the SUBSECTION REORDERING and BULLET ORDERING rules below.
+
 STRICT RULES — violations will cause rejection:
 
 1. PRESERVE ALL FACTS EXACTLY. Every number, percentage, metric, date, company name, tool name, and claim must come directly from the source resume. Do not round, approximate, inflate, or invent any number or claim.
@@ -258,6 +268,32 @@ LAYOUT CONSTRAINTS (hard requirements — output is rejected if violated):
 - NEVER write a bullet whose final rendered line will contain fewer than 4 words (a "widow line"). Specifically: avoid sentences that end with a short clause like "from days to minutes." or "stored Excel passwords." which would wrap such that the period falls alone on a final line. Instead, either tighten the sentence so it ends mid-line, or pad the final clause so the last line has 4+ words.
 - For the Skills section: keep ALL skill categories from the base resume. The section should occupy 4-7 lines total.
 - If your tailored output would push past 1 page, TIGHTEN wording inside bullets rather than dropping content. Cutting bullets or roles is a LAST resort, not the first move. The failure mode this brief is fixing is half-page output, not overflow — err toward keeping content.
+
+VERB DIVERSITY (hard requirement — output is rejected if violated):
+- Across the entire resume, no more than 2 bullets may start with the same verb.
+- Avoid the default "Built" lead. Specifically: rephrase bullets so the resume uses a variety of opening verbs. Draw from this pool, picking the verb that most accurately describes what the candidate did for that bullet:
+  Architected, Authored, Designed, Drove, Engineered, Established, Hardened, Implemented, Instrumented, Integrated, Launched, Led, Migrated, Optimized, Owned, Productionized, Refactored, Reduced, Replaced, Shipped, Scaled, Stabilized, Streamlined.
+- If a bullet's most accurate verb truly is "Built" or "Created," that is fine — but use it sparingly (max 2 across the whole resume).
+- Do not fabricate scope to fit a verb. "Architected" implies design authority; "Led" implies you directed others. Use accurately.
+
+SUBSECTION REORDERING (JD-focus-aware):
+Within the "Software Developer, Enidus USA LLC." experience item, the Enidus subsections (AI Chatbot & Agentic Copilot, Custom Reports & Dashboards Platform, and any others) should be ordered based on JD FOCUS:
+  - frontend → lead with Custom Reports & Dashboards Platform (React frontend), then AI Copilot.
+  - backend → lead with AI Copilot (FastAPI backend depth), then Reports.
+  - ai_infra → lead with AI Copilot (the headline agentic work), then Reports.
+  - fullstack → lead with AI Copilot, then Reports (both have full-stack but AI is the marquee).
+  - data → lead with Reports (data infra + multi-tenant analytics), then AI Copilot.
+Do not invent new subsections; reorder existing ones.
+
+BULLET ORDERING WITHIN SUBSECTIONS (JD-focus-aware):
+Within each subsection, order bullets to lead with the most JD-aligned content:
+  - frontend → lead with bullets that mention React, TypeScript, UI, UX, mobile, accessibility. Demote backend infra bullets (hybrid retrieval, RLS, RBAC, SQL templates, validators) to the bottom of the subsection — or omit entirely if the subsection has 5+ bullets and the backend-infra one is the weakest signal for this JD.
+  - backend → lead with bullets about services, databases, APIs, distributed systems. Demote pure-frontend bullets.
+  - ai_infra → lead with bullets about agentic systems, LLM safety, evaluation, retrieval, governance. Demote pure-frontend bullets.
+  - fullstack → preserve current ordering (both signals matter); minor tweaks only.
+  - data → lead with bullets about data pipelines, transformations, analytics. Demote pure-frontend or pure-AI-eval bullets.
+
+When demoting, do not delete bullets unless asked. Reordering only.
 
 4. TONE: Write like a competent engineer describing what they built FOR USERS, not like a developer listing what they used. Concrete, specific, plain language. Lead with outcomes; let stack lists trail.
 

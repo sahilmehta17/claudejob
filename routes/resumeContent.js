@@ -81,17 +81,17 @@ const RESUME_BASE_JSON = {
             {
               name: 'AI Chatbot & Agentic Copilot for T-Mobile for Business',
               bullets: [
-                "Built an AI assistant for T-Mobile for Business enabling natural-language queries over telecom account data plus multi-step account actions (device purchase, line suspension, plan upgrades); currently in pilot with 15 reseller tenants representing 25+ enterprise customers and 100+ daily portal users.",
-                "Built an agentic workflow that stages each transaction in an inline panel for user confirmation before backend execution; agent orchestration without autonomous write access.",
-                "Built a parametrized pytest eval suite (52 hand-designed cases fanning out to 400+ distinct test invocations) covering intent dispatch, planning, and execution; caught the agent hallucinating tool arguments (non-existent device SKUs, malformed BANs) early in development.",
-                "Built defense-in-depth safety: Pydantic-validated tool schemas + strict tool gating at the LLM boundary (model constrained to tool selection only, never raw SQL), then parameterized SQL templates + session-scoped row-level security + 8-role RBAC at the execution boundary, with per-tenant Qdrant collections for retrieval isolation.",
-                "Designed hybrid retrieval pipeline (Qdrant vector + BM25 + Reciprocal Rank Fusion); led routing-architecture pivot from lexical-first to vector-first for consumer-facing paraphrase tolerance.",
+                "Shipped an AI assistant for T-Mobile for Business enabling natural-language queries over telecom account data plus multi-step account actions (device purchase, line suspension, plan upgrades); currently in pilot with 15 reseller tenants representing 25+ enterprise customers and 100+ daily portal users.",
+                "Engineered an agentic workflow that stages each transaction in an inline panel for user confirmation before backend execution; agent orchestration without autonomous write access.",
+                "Authored a parametrized pytest eval suite (52 hand-designed cases fanning out to 400+ distinct test invocations) covering intent dispatch, planning, and execution; caught the agent hallucinating tool arguments (non-existent device SKUs, malformed BANs) early in development.",
+                "Architected defense-in-depth safety: Pydantic-validated tool schemas + strict tool gating at the LLM boundary (model constrained to tool selection only, never raw SQL), then parameterized SQL templates + session-scoped row-level security + 8-role RBAC at the execution boundary, with per-tenant Qdrant collections for retrieval isolation.",
+                "Implemented hybrid retrieval pipeline (Qdrant vector + BM25 + Reciprocal Rank Fusion); led routing-architecture pivot from lexical-first to vector-first for consumer-facing paraphrase tolerance.",
               ],
             },
             {
               name: 'Custom Reports & Dashboards Platform',
               bullets: [
-                "Built a self-serve full-stack analytics product end-to-end alone (React, Node.js + Express, SQL Server with stored procedures) letting enterprise customers compose reports, custom dashboards, and charts over their own data; cut analytics turnaround from days to minutes.",
+                "Owned a self-serve full-stack analytics product end-to-end alone (React, Node.js + Express, SQL Server with stored procedures) letting enterprise customers compose reports, custom dashboards, and charts over their own data; cut analytics turnaround from days to minutes.",
                 "Hardened against multi-tenant attack classes via stored-procedure CRUD contracts, two-layer filter validation, runtime tenant-clause injection, JWT auth, per-session CSRF rotation, strict CSP, and AES-256-CBC encryption for stored Excel passwords.",
               ],
             },
@@ -105,7 +105,7 @@ const RESUME_BASE_JSON = {
             {
               name: '',
               bullets: [
-                "Built a dynamic bus route adjustment algorithm using K-means clustering, reducing manual student-assignment effort by 80%; optimized Flask REST APIs for telemetry ingestion.",
+                "Designed a dynamic bus route adjustment algorithm using K-means clustering, reducing manual student-assignment effort by 80%; optimized Flask REST APIs for telemetry ingestion.",
               ],
             },
           ],
@@ -142,7 +142,7 @@ const RESUME_BASE_JSON = {
           title: 'RAG Pipeline - Denari AI Capstone',
           date: 'January 2025 - May 2025 | Madison, WI',
           bullets: [
-            "Built and deployed a full-stack RAG system over 22K+ documents and 300K+ embeddings (TypeScript, TimescaleDB, Docker, S3, OpenAI APIs); hybrid retrieval (BM25 + TF-IDF) with semantic re-ranking achieving 73% QA accuracy and 40% query-latency reduction; led Agile/Scrum delivery of 25+ production features across ingestion, embeddings, DB, and retrieval.",
+            "Productionized a full-stack RAG system over 22K+ documents and 300K+ embeddings (TypeScript, TimescaleDB, Docker, S3, OpenAI APIs); hybrid retrieval (BM25 + TF-IDF) with semantic re-ranking achieving 73% QA accuracy and 40% query-latency reduction; led Agile/Scrum delivery of 25+ production features across ingestion, embeddings, DB, and retrieval.",
           ],
         },
       ],

@@ -154,7 +154,7 @@ const RESUME_BASE_JSON = {
         { label: 'AI / LLM Systems', value: 'LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, vector search (Qdrant), prompt engineering, eval frameworks, structured outputs (Pydantic), streaming/SSE, PyTorch, TensorFlow' },
         { label: 'Languages', value: 'Python, JavaScript/TypeScript, Java, C, SQL, Kotlin, Swift, R. Cert: SnowPro Associate & Core (2024).' },
         { label: 'Frameworks', value: 'FastAPI, Node.js, Express, React, Next.js, Angular, Flask, Django, React Native' },
-        { label: 'Infra & Tools', value: 'PostgreSQL, REST, gRPC, AWS S3, Docker, Git, Claude Code, JWT/OAuth, RBAC' },
+        { label: 'Infra & Tools', value: 'PostgreSQL, REST, gRPC, AWS S3, GCP, Docker, Kubernetes, Git, Claude Code, JWT/OAuth, RBAC' },
       ],
     },
   ],

@@ -9,6 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 const fs = require('fs');
+const { Writable } = require('stream');
 const PDFDocument = require('pdfkit');
 
 // Unicode non-breaking space (U+00A0). pdfkit's Times-Roman uses WinAnsi
@@ -113,8 +114,22 @@ function preventWidow(text, doc, fontSize, maxWidth) {
 }
 
 class ResumeWriter {
-  constructor(outPath) {
+  constructor(outPath, opts = {}) {
     this.outPath = outPath;
+    this.measureOnly = !!opts.measureOnly;
+    // gaps: per-render overrides for spacing constants. The underfill
+    // distribution pass measures with the defaults, then re-instantiates the
+    // writer with expanded values so an underfilled page LOOKS full without
+    // changing typography. `section` is the EXTRA inter-section gap added on
+    // top of the separator line; defaults to 0 to preserve baseline behavior.
+    this.gaps = Object.assign(
+      {
+        section: 0,
+        postItem: R.GAP_POST_ITEM,
+        subsectionPre: R.GAP_SUBSECTION_PRE,
+      },
+      opts.gaps || {}
+    );
     // bufferPages: true keeps every page in _pageBuffer until doc.end() flushes
     // it. Without this, pdfkit flushes each page on addPage() and
     // bufferedPageRange() always reports count: 1, defeating the overflow guard.
@@ -124,7 +139,13 @@ class ResumeWriter {
       autoFirstPage: true,
       bufferPages: true,
     });
-    this.stream = fs.createWriteStream(outPath);
+    // In measureOnly mode, pipe to a noop sink so pdfkit's Readable doesn't
+    // build up backpressure while we walk the layout for height measurement.
+    if (this.measureOnly) {
+      this.stream = new Writable({ write(_c, _e, cb) { cb(); } });
+    } else {
+      this.stream = fs.createWriteStream(outPath);
+    }
     this.doc.pipe(this.stream);
     this.y = R.MARGIN_T + R.BODY_SIZE; // baseline of first line
   }
@@ -271,8 +292,8 @@ class ResumeWriter {
   }
 
   drawSubsection(text) {
-    this._checkBreak(R.GAP_SUBSECTION_PRE + R.LINE_H);
-    this.advance(R.GAP_SUBSECTION_PRE);
+    this._checkBreak(this.gaps.subsectionPre + R.LINE_H);
+    this.advance(this.gaps.subsectionPre);
     this._drawAt(R.CONTENT_X, this.y, text, R.FONT_BOLD, R.BODY_SIZE);
     this.advance(R.LINE_H);
   }
@@ -367,17 +388,22 @@ class ResumeWriter {
         `brevity guidance, or fall back to RESUME_BASE_JSON.`
       );
     }
-    // Soft guard: warn on underfill. The "1 page" rule cuts both ways — a
-    // half-page resume looks just as broken as a 2-page one. Log a warning
-    // when page 1 is less than 70% used so prompt regressions surface.
+    // Always log the realized page-fill percentage so the two-pass underfill
+    // adjuster's result is visible. The < 70% branch keeps the original
+    // prompt-regression warning for cases the adjuster can't fully recover
+    // (e.g., MAX_GAP_MULTIPLIER caps the expansion).
     const usable = R.PAGE_H - R.MARGIN_T - R.MARGIN_B;
     const used = this.y - R.MARGIN_T;
     const fillPct = used / usable;
+    console.log(
+      `[pdfRender] page filled at ${(fillPct * 100).toFixed(0)}% ` +
+      `(${used.toFixed(0)}pt of ${usable}pt)`
+    );
     if (fillPct < 0.7) {
       console.warn(
-        `[pdfRender] underfill: tailored resume only used ${(fillPct * 100).toFixed(0)}% of page 1 ` +
-        `(${used.toFixed(0)}pt of ${usable}pt). LLM likely dropped roles/bullets it shouldn't have. ` +
-        `Re-run or check the tailoring prompt's "preserve all content" constraint.`
+        `[pdfRender] underfill: page 1 below 70% even after gap distribution. ` +
+        `LLM may have dropped roles/bullets it shouldn't have — check the ` +
+        `tailoring prompt's "preserve all content" constraint.`
       );
     }
     return new Promise((resolve, reject) => {
@@ -389,12 +415,36 @@ class ResumeWriter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// renderResumePdf(content, outPath) → Promise<outPath>
-// content schema = same as DEFAULT_CONTENT in generate_resume.py / RESUME_BASE_JSON
+// Underfill page distribution — two-pass render.
+//
+// TARGET_FILL_PCT: aim for this fraction of usable page height when the
+// content is sparse. 0.92 keeps a small bottom margin so a tailored resume
+// never visually crowds the page edge.
+//
+// MAX_GAP_MULTIPLIER: cap on how much a single inter-section gap can grow
+// (relative to R.GAP_SECTION). 2.0 means the section gap can expand up to
+// 26pt extra; anything beyond that starts to look like blank-page padding.
 // ─────────────────────────────────────────────────────────────────────────────
-async function renderResumePdf(content, outPath) {
-  const w = new ResumeWriter(outPath);
+const TARGET_FILL_PCT = 0.92;
+const MAX_GAP_MULTIPLIER = 2.0;
 
+// Count the gap slots the underfill adjuster can grow: inter-section gaps
+// (sections.length - 1) + post-item gaps for experience/project items. Used
+// as the divisor for distributing the extra page-fill height per gap.
+function countResumeGaps(content) {
+  const sections = content.sections || [];
+  let n = sections.length > 0 ? sections.length - 1 : 0;
+  for (const s of sections) {
+    if (s.type === 'experience' || s.type === 'projects') {
+      n += (s.items || []).length;
+    }
+  }
+  return n;
+}
+
+// Render-or-measure path shared by both passes. Mutating writer.gaps before
+// calling this controls how much vertical space the layout consumes.
+function drawResumeContent(w, content) {
   w.drawName(content.name);
   w.drawContact(content.contact || []);
   if (content.summary) w.drawSummary(content.summary);
@@ -417,13 +467,13 @@ async function renderResumePdf(content, outPath) {
           if (sub.name) w.drawSubsection(sub.name);
           for (const b of sub.bullets || []) w.drawBullet(b);
         }
-        w.advance(R.GAP_POST_ITEM);
+        w.advance(w.gaps.postItem);
       }
     } else if (section.type === 'projects') {
       for (const item of section.items || []) {
         w.drawJobHeader(item.title, item.date, undefined, item.url);
         for (const b of item.bullets || []) w.drawBullet(b);
-        w.advance(R.GAP_POST_ITEM);
+        w.advance(w.gaps.postItem);
       }
     } else if (section.type === 'skills') {
       for (const item of section.items || []) {
@@ -432,12 +482,58 @@ async function renderResumePdf(content, outPath) {
     }
 
     // Draw separator between sections, but skip the trailing one — it would
-    // push to a new blank page when content already fills page 1.
+    // push to a new blank page when content already fills page 1. The
+    // optional extra inter-section gap is added AFTER the separator so the
+    // separator stays anchored to the previous section visually.
     if (i < sections.length - 1) {
       w.drawSeparator();
+      if (w.gaps.section > 0) w.advance(w.gaps.section);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// renderResumePdf(content, outPath) → Promise<outPath>
+// content schema = same as DEFAULT_CONTENT in generate_resume.py / RESUME_BASE_JSON
+//
+// Two-pass: measure with baseline gaps, then if the page is underfilled,
+// expand GAP_SECTION / GAP_POST_ITEM / GAP_SUBSECTION_PRE proportionally so
+// the rendered output fills TARGET_FILL_PCT of the page.
+// ─────────────────────────────────────────────────────────────────────────────
+async function renderResumePdf(content, outPath) {
+  // Pass 1: measure baseline content height with a discarded PDF.
+  const measurer = new ResumeWriter(null, { measureOnly: true });
+  drawResumeContent(measurer, content);
+  const usedHeight = measurer.y - R.MARGIN_T;
+  try { measurer.doc.end(); } catch (_) { /* noop sink */ }
+
+  const pageContentHeight = R.PAGE_H - R.MARGIN_T - R.MARGIN_B;
+  const targetHeight = TARGET_FILL_PCT * pageContentHeight;
+
+  // Compute adjusted gaps if (and only if) Pass 1 came in short of target.
+  let gaps;
+  if (usedHeight < targetHeight) {
+    const extra = targetHeight - usedHeight;
+    const gapCount = countResumeGaps(content);
+    if (gapCount > 0) {
+      // Cap at MAX_GAP_MULTIPLIER * R.GAP_SECTION so extra per slot can't
+      // exceed R.GAP_SECTION (26pt) — beyond that the layout starts looking
+      // like blank-page padding.
+      const extraPerGap = Math.min(
+        extra / gapCount,
+        R.GAP_SECTION * (MAX_GAP_MULTIPLIER - 1)
+      );
+      gaps = {
+        section: extraPerGap,
+        postItem: R.GAP_POST_ITEM + extraPerGap * 0.4,
+        subsectionPre: R.GAP_SUBSECTION_PRE + extraPerGap * 0.3,
+      };
     }
   }
 
+  // Pass 2: real render with the (possibly expanded) gaps.
+  const w = new ResumeWriter(outPath, { gaps });
+  drawResumeContent(w, content);
   return w.finish();
 }
 

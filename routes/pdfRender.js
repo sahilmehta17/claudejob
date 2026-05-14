@@ -614,18 +614,28 @@ async function renderResumePdf(content, outPath) {
   // Pass C: real render with the (possibly expanded) gaps and lineH. Wrap in
   // try/catch — if a content shape we didn't anticipate STILL overflows after
   // Pass B2, retry with default spacing rather than leaving an empty PDF.
+  // Three-tier fallback: adjusted → default-spacing → RESUME_BASE_JSON.
+  // The base-content fallback ensures the user always gets a valid resume
+  // PDF even when the LLM tailoring produced too much content to fit.
   try {
     const w = new ResumeWriter(outPath, { gaps, lineH });
     drawResumeContent(w, content);
     return await w.finish();
   } catch (e) {
-    if (String(e.message).includes('Resume overflow')) {
-      console.warn('[pdfRender] tailored render overflowed despite projection; retrying with default spacing');
+    if (!String(e.message).includes('Resume overflow')) throw e;
+    console.warn('[pdfRender] tailored render overflowed despite projection; retrying with default spacing');
+    try {
       const w2 = new ResumeWriter(outPath, {});
       drawResumeContent(w2, content);
       return await w2.finish();
+    } catch (e2) {
+      if (!String(e2.message).includes('Resume overflow')) throw e2;
+      console.warn('[pdfRender] tailored content too long for 1 page even at default spacing — falling back to RESUME_BASE_JSON. Tailoring discarded for this submission.');
+      const { RESUME_BASE_JSON } = require('./resumeContent');
+      const w3 = new ResumeWriter(outPath, {});
+      drawResumeContent(w3, RESUME_BASE_JSON);
+      return await w3.finish();
     }
-    throw e;
   }
 }
 

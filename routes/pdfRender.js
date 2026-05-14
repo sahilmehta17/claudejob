@@ -667,17 +667,42 @@ async function renderCoverPdf(content, outPath) {
   doc.text(content.name || '', (C.PAGE_W - nameW) / 2, y - C.NAME_SIZE * 0.85, { lineBreak: false });
   y += 18;
 
-  // Contact line.
-  // Items can be plain strings or { text, url } objects (the resume PDF
-  // renders the latter as clickable links via drawContact). The cover letter
-  // only shows visible text, so flatten both shapes to strings.
+  // Contact line — mirrors drawContact() in the resume writer. Items can be
+  // plain strings or { text, url } objects. URL items render as clickable
+  // blue underlined links with link annotation rectangles; plain strings
+  // render in black. Centered as a single horizontal row.
   doc.font(C.FONT_NORMAL).fontSize(C.CONTACT_SIZE);
-  const contactStrs = (content.contact || []).map(c =>
-    typeof c === 'string' ? c : (c && c.text) || ''
-  ).filter(Boolean);
-  const contact = contactStrs.join(' | ');
-  const contactW = doc.widthOfString(contact);
-  doc.text(contact, (C.PAGE_W - contactW) / 2, y - C.CONTACT_SIZE * 0.85, { lineBreak: false });
+  const cItems = (content.contact || []).map(p => (typeof p === 'string' ? { text: p } : p))
+    .filter(it => it && it.text);
+  const cSep = ' | ';
+  const cSepW = doc.widthOfString(cSep);
+  const cTotalW = cItems.reduce((acc, it, i) => {
+    return acc + doc.widthOfString(it.text) + (i > 0 ? cSepW : 0);
+  }, 0);
+  let cx = (C.PAGE_W - cTotalW) / 2;
+  const cTopY = y - C.CONTACT_SIZE * 0.85;
+  for (let i = 0; i < cItems.length; i++) {
+    const it = cItems[i];
+    if (i > 0) {
+      doc.fillColor('#000000');
+      doc.text(cSep, cx, cTopY, { lineBreak: false });
+      cx += cSepW;
+    }
+    const itemW = doc.widthOfString(it.text);
+    if (it.url) {
+      doc.fillColor('#0000EE');
+      doc.text(it.text, cx, cTopY, { lineBreak: false });
+      const ulY = cTopY + C.CONTACT_SIZE - 1;
+      doc.moveTo(cx, ulY).lineTo(cx + itemW, ulY).strokeColor('#0000EE').lineWidth(0.5).stroke();
+      doc.fillColor('#000000').strokeColor('#000000');
+      doc.link(cx, cTopY, itemW, C.CONTACT_SIZE, it.url);
+    } else {
+      doc.fillColor('#000000');
+      doc.text(it.text, cx, cTopY, { lineBreak: false });
+    }
+    cx += itemW;
+  }
+  doc.fillColor('#000000');
   y += 10;
 
   // Separator.

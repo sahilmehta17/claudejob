@@ -432,8 +432,8 @@ class ResumeWriter {
 // gap expansion alone can't reach TARGET_FILL_PCT. +2pt is the point beyond
 // which the typography reads as padded.
 // ─────────────────────────────────────────────────────────────────────────────
-const TARGET_FILL_PCT = 0.95;
-const MAX_GAP_MULTIPLIER = 4.0;
+const TARGET_FILL_PCT = 0.98;
+const MAX_GAP_MULTIPLIER = 5.0;
 const MAX_LINE_H_BUMP = 2.0;
 
 // Count the gap slots the underfill adjuster can grow: inter-section gaps

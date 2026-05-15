@@ -1,7 +1,7 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const router = express.Router();
-const { RESUME_BASE_JSON, CANDIDATE_FACTS, renderResumeText, applyAdjacency } = require('./resumeContent');
+const { RESUME_BASE_JSON, CANDIDATE_FACTS, renderResumeText, applyAdjacency, sumBulletChars, BASE_BULLET_CHAR_BUDGET } = require('./resumeContent');
 const { saveApplicationBundle } = require('./saveBundle');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -250,6 +250,13 @@ If the JD title contains AI keywords (AI, ML, LLM, GenAI, Agentic, Intelligent) 
 
 STRICT RULES — violations will cause rejection:
 
+HARD CHARACTER BUDGET (most important rule — output is rejected if violated):
+- The total character count of all bullet text across experience + projects sections must NOT exceed ${BASE_BULLET_CHAR_BUDGET} characters.
+- This is the budget the base resume uses, which fits on exactly 1 page. Tailored versions that exceed this budget overflow page 1 and trigger fallback to the base resume — meaning your tailoring is discarded entirely.
+- Count BEFORE submitting: sum the .length of every bullet string. If your output exceeds ${BASE_BULLET_CHAR_BUDGET}, COMPRESS bullets: drop redundant clauses, tighten phrasing, or drop the lowest-relevance bullet entirely.
+- Skills section is constrained separately (4 lines). This budget applies only to bullet content.
+- This budget OVERRIDES all other content goals. If preserving a JD-keyword anchor or following verb diversity would push you over budget, COMPRESS something else FIRST. The budget is non-negotiable.
+
 1. PRESERVE ALL FACTS EXACTLY. Every number, percentage, metric, date, company name, tool name, and claim must come directly from the source resume. Do not round, approximate, inflate, or invent any number or claim.
 
 2. ALLOWED EDITS ONLY:
@@ -451,6 +458,30 @@ Return this JSON (no markdown fences, no commentary):
       send({ step: 'resume', type: 'warning', message: 'LLM JSON parse failed — using base resume. ' + parsed.error });
     } else {
       tailoredJson = parsed.data;
+    }
+
+    // Post-LLM character-budget audit. Warn-only — the 3-tier render fallback
+    // in pdfRender.js is the real safety net. This log gives a clear signal
+    // BEFORE the render attempts, so prompt drift (LLM ignoring the budget
+    // rule) is visible in the server console without waiting for a fallback.
+    try {
+      const tailoredChars = sumBulletChars(tailoredJson);
+      const overBudget = tailoredChars - BASE_BULLET_CHAR_BUDGET;
+      if (overBudget > 0) {
+        console.warn(
+          `[ai.tailoring] tailored output exceeds char budget by ${overBudget} chars ` +
+          `(${tailoredChars} of ${BASE_BULLET_CHAR_BUDGET}) — render fallback likely to fire`
+        );
+      } else if (overBudget < -200) {
+        // Tailored is significantly under-budget — flag for the opposite reason
+        // (page may render thin even after gap distribution).
+        console.log(
+          `[ai.tailoring] tailored output is ${-overBudget} chars under budget ` +
+          `(${tailoredChars} of ${BASE_BULLET_CHAR_BUDGET}) — page may underfill`
+        );
+      }
+    } catch (e) {
+      console.warn('[ai.tailoring] budget audit threw:', e.message);
     }
 
     // Apply adjacency: inject JD-required skills the candidate lacks but has a

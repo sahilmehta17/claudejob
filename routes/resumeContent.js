@@ -376,6 +376,36 @@ function applyAdjacency(jsonResume, jdRequiredSkills) {
   return { json: next, added };
 }
 
+/**
+ * Sum character count of all bullet text across experience + projects sections.
+ * Used by the resume tailoring prompt as the hard upper bound for tailored
+ * output — the base is known to fit 1 page, so its total bullet char count is
+ * the budget tailored variants must not exceed.
+ *
+ * Skills section is excluded because it's constrained separately (4 lines).
+ * Section headers, job titles, dates, subsection names also excluded — they're
+ * structural and don't shrink under tailoring.
+ */
+function sumBulletChars(resumeJson) {
+  let total = 0;
+  for (const section of resumeJson.sections || []) {
+    if (section.type === 'experience') {
+      for (const item of section.items || []) {
+        for (const sub of item.subsections || []) {
+          for (const b of sub.bullets || []) total += String(b).length;
+        }
+      }
+    } else if (section.type === 'projects') {
+      for (const item of section.items || []) {
+        for (const b of item.bullets || []) total += String(b).length;
+      }
+    }
+  }
+  return total;
+}
+
+const BASE_BULLET_CHAR_BUDGET = sumBulletChars(RESUME_BASE_JSON);
+
 module.exports = {
   RESUME_BASE_JSON,
   CANDIDATE_FACTS,
@@ -383,4 +413,6 @@ module.exports = {
   ADJACENCY_MAP,
   applyAdjacency,
   extractUserSkills,
+  sumBulletChars,
+  BASE_BULLET_CHAR_BUDGET,
 };

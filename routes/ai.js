@@ -290,6 +290,15 @@ VERB DIVERSITY (hard requirement — output is rejected if violated):
 - If a bullet's most accurate verb truly is "Built" or "Created," that is fine — but use it sparingly (max 2 across the whole resume).
 - Do not fabricate scope to fit a verb. "Architected" implies design authority; "Led" implies you directed others. Use accurately.
 
+JD-KEYWORD ANCHOR PRESERVATION (hard requirement):
+When rewriting bullets for verb diversity or JD-focus reordering, PRESERVE any technology / framework keywords from the JD's required-skills section in the bullet text. Specifically:
+- Identify the top 5-8 technology keywords from the JD's "What you'll be doing" / "Who you are looking for" / "Qualifications" sections (e.g., React, React Native, TypeScript, GraphQL, REST, accessibility, A/B testing, feature flags).
+- For each Enidus subsection, ensure at least ONE bullet within that subsection mentions a relevant JD keyword in its body text (not just the skills section at the bottom of the resume — recruiters scan bullets, not just skills lists).
+- If a bullet's original phrasing included a JD keyword (e.g., "React + TypeScript frontend UI"), DO NOT drop that keyword during the verb-diversity rewrite. Find a way to keep it in the new phrasing.
+- Acceptable: "Shipped a React + TypeScript frontend for the AI assistant..." (preserved React+TS).
+- Unacceptable: "Shipped an AI assistant enabling natural-language queries..." (lost React+TS anchor that was in the JD).
+- The skills section listing is necessary but not sufficient. Bullets must demonstrate use of the JD keywords, not just claim them.
+
 SUBSECTION REORDERING (JD-focus-aware):
 Within the "Software Developer, Enidus USA LLC." experience item, the Enidus subsections (AI Chatbot & Agentic Copilot, Custom Reports & Dashboards Platform, and any others) should be ordered based on JD FOCUS:
   - frontend → lead with Custom Reports & Dashboards Platform (React frontend), then AI Copilot.

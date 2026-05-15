@@ -274,8 +274,14 @@ LAYOUT CONSTRAINTS (hard requirements — output is rejected if violated):
 - PRESERVE bullet count per subsection. Tighten wording inside a bullet if needed; do not silently drop bullets. Dropping a bullet is acceptable ONLY if keeping it would force overflow to page 2.
 - Each bullet should be 20-35 words. Bullets under 15 words read as filler and get rejected. Bullets over 40 words wrap to too many lines.
 - NEVER write a bullet whose final rendered line will contain fewer than 4 words (a "widow line"). Specifically: avoid sentences that end with a short clause like "from days to minutes." or "stored Excel passwords." which would wrap such that the period falls alone on a final line. Instead, either tighten the sentence so it ends mid-line, or pad the final clause so the last line has 4+ words.
-- For the Skills section: keep ALL skill categories from the base resume. The section should occupy 4-7 lines total.
+- For the Skills section: keep ALL skill categories from the base resume. The section must occupy EXACTLY 4 lines (matching the base resume's 4-category structure). See SKILLS SECTION LINE COUNT below.
 - If your tailored output would push past 1 page, TIGHTEN wording inside bullets rather than dropping content. Cutting bullets or roles is a LAST resort, not the first move. The failure mode this brief is fixing is half-page output, not overflow — err toward keeping content.
+
+SKILLS SECTION LINE COUNT (hard requirement — output is rejected if violated):
+- The TECHNICAL SKILLS section must contain EXACTLY 4 category lines, matching the base resume's structure. The base has: AI / LLM Systems, Languages, Frameworks, Infra & Tools.
+- You may RENAME and REORDER categories to match JD focus (e.g., "Frontend & Mobile: ..." instead of "Frameworks: ..." for frontend roles) but you may NOT add a 5th category line.
+- If you need to surface both frontend AND backend frameworks for a fullstack JD, combine them under a single line: "Frameworks & APIs: React, Node.js, Express, FastAPI, ...".
+- Total skills section height must fit within the 4-line budget the base resume uses. Adding a 5th line overflows the page and triggers fallback to base.
 
 VERB DIVERSITY (hard requirement — output is rejected if violated):
 - Across the entire resume, no more than 2 bullets may start with the same verb.

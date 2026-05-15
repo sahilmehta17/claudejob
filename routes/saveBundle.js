@@ -88,9 +88,17 @@ async function saveApplicationBundle({
   };
 
   // Generate both PDFs in parallel — pure JS, no spawn.
+  // renderResumePdf returns { path, fallback, fillPct }; renderCoverPdf still
+  // returns the path string. Capture the resume result so the SSE pipeline
+  // can warn the user when a 3-tier fallback fired (default-spacing or
+  // base-content) — otherwise the saved PDF silently diverges from the
+  // tailored output shown in the UI.
   const errors = [];
+  let resumeResult = null;
   await Promise.all([
-    renderResumePdf(resumeJson, resumePdf).catch(e => errors.push(`resume: ${e.message}`)),
+    renderResumePdf(resumeJson, resumePdf)
+      .then(r => { resumeResult = r; })
+      .catch(e => errors.push(`resume: ${e.message}`)),
     renderCoverPdf(coverContent, coverPdf).catch(e => errors.push(`cover: ${e.message}`)),
   ]);
 
@@ -101,6 +109,10 @@ async function saveApplicationBundle({
   return {
     folder,
     files: { resumePdf, coverTxt, coverPdf, jdJson: jdAnalysis ? jdJson : null },
+    renderInfo: {
+      resumeFallback: resumeResult ? resumeResult.fallback : 'none',
+      resumeFillPct: resumeResult ? resumeResult.fillPct : null,
+    },
   };
 }
 

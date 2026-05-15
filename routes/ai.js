@@ -569,7 +569,30 @@ RULES:
         jdAnalysis: jdData,
         candidateName: RESUME_BASE_JSON.name,
       });
-      send({ step: 'save', status: 'done', folder: saveResult.folder, files: saveResult.files });
+      send({
+        step: 'save',
+        status: 'done',
+        folder: saveResult.folder,
+        files: saveResult.files,
+        renderInfo: saveResult.renderInfo,
+      });
+
+      // Surface 3-tier render fallback to the UI. When the resume couldn't
+      // render at adjusted spacing (or at all), the saved PDF on disk differs
+      // from the tailored output the user just saw stream in — they MUST be
+      // told before they submit, otherwise they ship the wrong artifact.
+      const fb = saveResult.renderInfo && saveResult.renderInfo.resumeFallback;
+      if (fb && fb !== 'none') {
+        send({
+          step: 'resume',
+          status: 'warning',
+          fallback: fb,
+          fillPct: saveResult.renderInfo.resumeFillPct,
+          message: fb === 'base-content'
+            ? 'Tailored content was too long for 1 page — fell back to BASE resume. The PDF saved is your canonical base, not the tailored version shown above.'
+            : 'Tailored content overflowed at adjusted spacing — fell back to default spacing. PDF is tailored but with reduced page fill.',
+        });
+      }
     } catch (e) {
       console.error('[save] Failed to save application bundle:', e.message);
       send({ step: 'save', status: 'error', message: e.message });

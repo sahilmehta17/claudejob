@@ -528,6 +528,7 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
       </div>
       <div id="pipe-error" style="display:none;margin-top:10px" class="status-line err"></div>
       <div id="pipe-success" style="display:none;margin-top:10px" class="status-line ok"></div>
+      <div id="pipe-fallback-banner" style="display:none;margin-top:10px;padding:14px 16px;background:#3a2c0a;border:2px solid #f5a623;border-radius:8px;color:#ffd96b;font-size:13px;line-height:1.55;font-weight:600"></div>
       <div id="pipe-saved-folder" style="display:none;margin-top:10px;padding:10px 12px;background:#0f1f33;border:1px solid #1e3a5f;border-radius:6px;font-size:13px;line-height:1.5"></div>
       <div id="pipe-adjacency" style="display:none;margin-top:8px;padding:8px 12px;background:#1f2410;border:1px solid #4a5320;border-radius:6px;font-size:12px;color:#cfd9a8;line-height:1.45"></div>
     </div>
@@ -552,6 +553,9 @@ label.field-label{display:block;font-size:10px;font-weight:700;color:var(--hint)
 
 <!-- ═══════════ RESUME ═══════════ -->
 <div class="page" id="page-resume">
+  <!-- Fallback banner — 3-tier render fallback warning. Yellow, undismissable
+       except via Acknowledge or Re-run pipeline. Gates the Apply Helper submit. -->
+  <div id="resume-fallback-banner" style="display:none;margin-bottom:12px;padding:14px 16px;background:#3a2c0a;border:2px solid #f5a623;border-radius:8px;color:#ffd96b;font-size:13px;line-height:1.6;font-weight:600"></div>
   <!-- Validation banner -->
   <div id="resume-validation-banner" style="display:none"></div>
 
@@ -835,6 +839,11 @@ const S = {
   activityLog: [],
   currentES: null,   // current EventSource reference for cleanup
   showingOriginal: false,
+  // 3-tier render fallback info — when set, the saved PDF on disk differs
+  // from the tailored output rendered above. Apply Helper submit is gated
+  // until the user acknowledges (or re-runs the pipeline).
+  fallback: null,            // null | { fallback: 'default-spacing'|'base-content', message, fillPct }
+  fallbackAcknowledged: false,
 };
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -887,6 +896,8 @@ function goPage(id, el) {
   if (id === 'dash') renderDashboard();
   if (id === 'tracker') renderKanban();
   if (id === 'applyHelper') renderApplyHelper();
+  // Re-render the fallback banner so it appears on whichever page hosts it.
+  if (id === 'resume' || id === 'pipeline') renderFallbackBanner();
 }
 
 // ─── HEALTH + TRACKER ─────────────────────────────────────────────────────────
@@ -1263,12 +1274,15 @@ async function runPipeline() {
   // Reset outputs
   S.resume = ''; S.cl = ''; S.qa = []; S.jdData = null;
   S.resumeValidation = null; S.resumeDiff = null;
+  S.fallback = null; S.fallbackAcknowledged = false;
   document.getElementById('resume-out').textContent = '';
   document.getElementById('cl-out').textContent = '';
   document.getElementById('qa-list').innerHTML = '<div class="empty">Generating...</div>';
   document.getElementById('pipe-resume-preview').textContent = '';
   document.getElementById('pipe-cover-preview').textContent = '';
   document.getElementById('resume-validation-banner').style.display = 'none';
+  document.getElementById('resume-fallback-banner').style.display = 'none';
+  document.getElementById('pipe-fallback-banner').style.display = 'none';
   resetMatchPanel();
 
   markStep(2, 'active', 'Analyzing job description...');
@@ -1354,6 +1368,23 @@ function handlePipelineEvent(data, es) {
       renderResumeValidation();
       renderResumeDiff();
       setProgress(55, 'Resume tailored');
+    }
+    // 3-tier render fallback warning — fires after save. The PDF written to
+    // disk does not match the tailored text streamed above. Surface a yellow
+    // banner (pipeline + resume tabs) and gate Apply Helper's submit until
+    // the user acknowledges or re-runs the pipeline.
+    if (data.status === 'warning' && data.fallback) {
+      S.fallback = {
+        fallback: data.fallback,
+        message: data.message || '',
+        fillPct: typeof data.fillPct === 'number' ? data.fillPct : null,
+      };
+      S.fallbackAcknowledged = false;
+      renderFallbackBanner();
+      markStep(3, 'warn', data.fallback === 'base-content'
+        ? 'Fallback to BASE — PDF saved is NOT the tailored version above'
+        : 'Fallback to default spacing — PDF differs from preview');
+      renderApplyHelper();
     }
   }
 
@@ -1472,10 +1503,94 @@ function resetPipeline() {
   resetOutputPreviews();
   S.resume = ''; S.cl = ''; S.qa = []; S.jdData = null;
   S.resumeValidation = null; S.resumeDiff = null;
+  S.fallback = null; S.fallbackAcknowledged = false;
   document.getElementById('resume-out').textContent = 'Select a job and run the pipeline.';
   document.getElementById('cl-out').innerHTML = '<div class="cover-placeholder">Run the pipeline to generate your cover letter.</div>';
   document.getElementById('qa-list').innerHTML = '<div class="empty">Run the pipeline first</div>';
   document.getElementById('resume-validation-banner').style.display = 'none';
+  document.getElementById('resume-fallback-banner').style.display = 'none';
+  document.getElementById('pipe-fallback-banner').style.display = 'none';
+}
+
+// ─── 3-TIER RENDER FALLBACK BANNER ────────────────────────────────────────────
+// When pdfRender's 3-tier fallback fires, the PDF saved to disk diverges from
+// the tailored text shown in the UI. The banner is yellow, undismissable, and
+// gates the Apply Helper submit button (rendered in renderApplyHelper). The
+// user must either Acknowledge (proceed with the saved artifact, eyes open) or
+// Re-run the pipeline (often produces different output that fits on 1 page).
+function renderFallbackBanner() {
+  const banners = [
+    document.getElementById('pipe-fallback-banner'),
+    document.getElementById('resume-fallback-banner'),
+  ];
+  const fb = S.fallback;
+  if (!fb) {
+    banners.forEach(b => { if (b) { b.style.display = 'none'; b.innerHTML = ''; } });
+    return;
+  }
+
+  const heading = fb.fallback === 'base-content'
+    ? '⚠ PDF saved is your BASE resume — NOT the tailored version above'
+    : '⚠ PDF saved uses fallback spacing — reduced page fill';
+
+  for (const banner of banners) {
+    if (!banner) continue;
+    banner.style.display = 'block';
+    banner.innerHTML = '';
+
+    const head = document.createElement('div');
+    head.style.cssText = 'font-size:14px;margin-bottom:6px';
+    head.textContent = heading;
+    banner.appendChild(head);
+
+    const body = document.createElement('div');
+    body.style.cssText = 'font-weight:400;font-size:12.5px;line-height:1.55;margin-bottom:10px';
+    body.textContent = fb.message;
+    banner.appendChild(body);
+
+    if (typeof fb.fillPct === 'number') {
+      const meta = document.createElement('div');
+      meta.style.cssText = 'font-weight:400;font-size:11px;color:#d4b878;margin-bottom:10px';
+      meta.textContent = 'Realized page fill: ' + Math.round(fb.fillPct * 100) + '%';
+      banner.appendChild(meta);
+    }
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap';
+
+    const ackBtn = document.createElement('button');
+    ackBtn.textContent = S.fallbackAcknowledged ? 'Acknowledged ✓' : 'Acknowledge';
+    ackBtn.disabled = S.fallbackAcknowledged;
+    ackBtn.style.cssText = 'padding:8px 14px;background:' + (S.fallbackAcknowledged ? '#4a3a10' : '#f5a623') +
+      ';color:' + (S.fallbackAcknowledged ? '#9a8a55' : '#1a1206') +
+      ';border:1px solid #f5a623;border-radius:6px;font-size:12.5px;font-weight:600;cursor:' +
+      (S.fallbackAcknowledged ? 'default' : 'pointer');
+    ackBtn.onclick = acknowledgeFallback;
+    row.appendChild(ackBtn);
+
+    const rerunBtn = document.createElement('button');
+    rerunBtn.textContent = 'Re-run pipeline';
+    rerunBtn.style.cssText = 'padding:8px 14px;background:#3a2c0a;color:#ffd96b;border:1px solid #f5a623;border-radius:6px;font-size:12.5px;font-weight:600;cursor:pointer';
+    rerunBtn.onclick = rerunPipelineForFallback;
+    row.appendChild(rerunBtn);
+
+    banner.appendChild(row);
+  }
+}
+
+function acknowledgeFallback() {
+  S.fallbackAcknowledged = true;
+  renderFallbackBanner();
+  renderApplyHelper();
+}
+
+function rerunPipelineForFallback() {
+  // Re-runs tailoring for the currently selected job. Often the second pass
+  // produces output that fits without fallback (non-deterministic LLM).
+  if (!S.selected) return;
+  resetPipeline();
+  goPage('pipeline', null);
+  runPipeline();
 }
 
 // ─── RESUME VALIDATION + DIFF ─────────────────────────────────────────────────
@@ -2223,7 +2338,17 @@ async function renderApplyHelper() {
   setCheck('aa-check-cover', hasCover, hasCover ? 'Ready' : 'Run pipeline first');
   setCheck('aa-check-qa', hasQA, hasQA ? S.qa.length + ' answers ready' : 'Run pipeline first');
 
-  document.getElementById('aa-approve-btn').disabled = !hasResume;
+  // Gate submit on render-fallback acknowledgement. When a fallback fired,
+  // the PDF on disk diverges from the tailored output the user just saw —
+  // they MUST acknowledge (or re-run) before they can submit.
+  const fallbackGated = !!(S.fallback && !S.fallbackAcknowledged);
+  const approveBtn = document.getElementById('aa-approve-btn');
+  approveBtn.disabled = !hasResume || fallbackGated;
+  if (fallbackGated) {
+    approveBtn.title = 'Render fallback fired — acknowledge or re-run pipeline first';
+  } else {
+    approveBtn.removeAttribute('title');
+  }
 
   // Fetch ATS + cheat sheet
   try {

@@ -410,9 +410,12 @@ class ResumeWriter {
         `tailoring prompt's "preserve all content" constraint.`
       );
     }
+    // Capture the realized fill ratio so renderResumePdf can plumb it through
+    // to the UI (used by the warning banner copy when a fallback fires).
+    this._fillPct = fillPct;
     return new Promise((resolve, reject) => {
       this.doc.end();
-      this.stream.on('finish', () => resolve(this.outPath));
+      this.stream.on('finish', () => resolve({ path: this.outPath, fillPct }));
       this.stream.on('error', reject);
     });
   }
@@ -617,24 +620,32 @@ async function renderResumePdf(content, outPath) {
   // Three-tier fallback: adjusted → default-spacing → RESUME_BASE_JSON.
   // The base-content fallback ensures the user always gets a valid resume
   // PDF even when the LLM tailoring produced too much content to fit.
+  //
+  // Returns { path, fallback, fillPct } so callers (saveBundle → SSE → UI)
+  // can surface which tier landed. fallback ∈ 'none' | 'default-spacing' |
+  // 'base-content'. When non-'none' the UI MUST warn the user that the saved
+  // PDF differs from the tailored output rendered above.
   try {
     const w = new ResumeWriter(outPath, { gaps, lineH });
     drawResumeContent(w, content);
-    return await w.finish();
+    const r = await w.finish();
+    return { path: r.path, fallback: 'none', fillPct: r.fillPct };
   } catch (e) {
     if (!String(e.message).includes('Resume overflow')) throw e;
     console.warn('[pdfRender] tailored render overflowed despite projection; retrying with default spacing');
     try {
       const w2 = new ResumeWriter(outPath, {});
       drawResumeContent(w2, content);
-      return await w2.finish();
+      const r2 = await w2.finish();
+      return { path: r2.path, fallback: 'default-spacing', fillPct: r2.fillPct };
     } catch (e2) {
       if (!String(e2.message).includes('Resume overflow')) throw e2;
       console.warn('[pdfRender] tailored content too long for 1 page even at default spacing — falling back to RESUME_BASE_JSON. Tailoring discarded for this submission.');
       const { RESUME_BASE_JSON } = require('./resumeContent');
       const w3 = new ResumeWriter(outPath, {});
       drawResumeContent(w3, RESUME_BASE_JSON);
-      return await w3.finish();
+      const r3 = await w3.finish();
+      return { path: r3.path, fallback: 'base-content', fillPct: r3.fillPct };
     }
   }
 }

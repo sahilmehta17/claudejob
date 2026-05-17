@@ -71,9 +71,14 @@ async function saveApplicationBundle({
   const coverPdf  = path.join(folder, `${namePrefix}_CoverLetter.pdf`);
   const jdJson    = path.join(folder, 'JD_Analysis.json');
 
-  // Write JD analysis JSON.
+  // Write JD analysis JSON. Inject `company` and `title` into the saved
+  // payload so the post-generation validator can verify the cover-letter
+  // company spelling against the canonical posting (not a lossy deslug of the
+  // folder name — that loses casing for multi-word names like "CookUnity"
+  // vs "Cook Unity", which is exactly the typo class the validator catches).
   if (jdAnalysis) {
-    await fs.writeFile(jdJson, JSON.stringify(jdAnalysis, null, 2), 'utf8');
+    const enriched = Object.assign({ company, title }, jdAnalysis);
+    await fs.writeFile(jdJson, JSON.stringify(enriched, null, 2), 'utf8');
   }
 
   // Write cover letter as plain text.

@@ -3,6 +3,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const router = express.Router();
 const { RESUME_BASE_JSON, CANDIDATE_FACTS, renderResumeText, applyAdjacency, sumBulletChars, BASE_BULLET_CHAR_BUDGET } = require('./resumeContent');
 const { saveApplicationBundle } = require('./saveBundle');
+const { runChecks: runBundleChecks } = require('../scripts/validate');
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -404,6 +405,12 @@ Tags: ${job.tags.join(', ')}
 
 Sahil's profile: Node.js, TypeScript, Python, PostgreSQL, AWS, PyTorch, RAG, Qdrant, Apache Spark, REST APIs, Docker, Flask, FastAPI, React, Angular, SQL Server, TimescaleDB, Kafka, gRPC.
 
+Rules for "missing_skills":
+- Only list recognizable technologies, languages, frameworks, libraries, or platforms (e.g., Python, Go, Kubernetes, GraphQL, vSphere, Terraform, Snowflake).
+- Do NOT list product names, brand names, internal assistant names, or platform names that happen to appear capitalized in the JD (e.g., "Ruby AI", "Sage", "Copilot", "Einstein", "Watson"). These are products, not skills a candidate would learn.
+- If a token appears in the JD only adjacent to words like "AI", "Cloud", "Assistant", "Platform", "Suite", or as the name of the hiring company's product, treat it as a proper noun and exclude it.
+- When in doubt, omit — false positives here mislead the tailoring step downstream.
+
 Return this JSON (no markdown fences, no commentary):
 {
   "match_score": <0-100>,
@@ -627,6 +634,40 @@ RULES:
             ? 'Tailored content was too long for 1 page — fell back to BASE resume. The PDF saved is your canonical base, not the tailored version shown above.'
             : 'Tailored content overflowed at adjusted spacing — fell back to default spacing. PDF is tailored but with reduced page fill.',
         });
+      }
+
+      // ── Post-generation validator ───────────────────────────────────────
+      // Runs 12 deterministic checks against the saved bundle (file integrity,
+      // identity drift, resume structure, cover salutation/signoff, JD
+      // relevance). Catches the failure mode where Rubrik's resume shipped
+      // as 0 bytes plus the FreedomCare-class issues (missing salutation,
+      // wrong company spelling). Hard fails surface as a 'validation' SSE
+      // event marked status:'fail' so the UI can block submit. We do NOT
+      // auto-retry — the user decides.
+      try {
+        send({ step: 'validation', status: 'start' });
+        const valResult = await runBundleChecks(saveResult.folder);
+        const hardFails = valResult.checks.filter(c => !c.passed && c.severity !== 'warn');
+        const warns     = valResult.checks.filter(c => !c.passed && c.severity === 'warn');
+        const status    = hardFails.length === 0 ? 'done' : 'fail';
+        send({
+          step: 'validation',
+          status,
+          passed: valResult.checks.length - hardFails.length - warns.length,
+          total:  valResult.checks.length,
+          hardFails: hardFails.map(c => ({ name: c.name, reason: c.reason })),
+          warns:     warns.map(c => ({ name: c.name, reason: c.reason })),
+          checks:    valResult.checks,
+        });
+        if (hardFails.length > 0) {
+          console.warn(
+            `[validate] ${saveResult.folder} failed ${hardFails.length} check(s): ` +
+            hardFails.map(c => `${c.name} (${c.reason})`).join('; ')
+          );
+        }
+      } catch (e) {
+        console.error('[validate] Validator threw:', e.message);
+        send({ step: 'validation', status: 'error', message: e.message });
       }
     } catch (e) {
       console.error('[save] Failed to save application bundle:', e.message);

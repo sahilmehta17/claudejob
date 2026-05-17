@@ -75,10 +75,14 @@ function validateResumeOutput(resumeText) {
     warnings.push(`Contains banned AI-resume phrases: ${unique.join(', ')}`);
   }
 
-  // Check that core sections exist
+  // Check that core sections exist.
+  // Match the section name as a whole word against the raw (case-sensitive) text:
+  // headers are rendered in uppercase, body values are mixed-case, so this
+  // cleanly separates a real header from incidental matches like "Claude Skills"
+  // inside a skill-line value.
   const requiredSections = ['EDUCATION', 'PROFESSIONAL EXPERIENCE', 'SKILLS'];
   for (const section of requiredSections) {
-    if (!resumeText.toUpperCase().includes(section)) {
+    if (!new RegExp(`\\b${section}\\b`).test(resumeText)) {
       warnings.push(`Missing expected section: ${section}`);
     }
   }

@@ -35,6 +35,12 @@ const CANDIDATE_FACTS = `
 - Orahi internship (Jul-Aug 2024): K-means clustering algorithm for dynamic bus route adjustment, 80% reduction in manual student-assignment effort. Flask REST APIs for telemetry ingestion.
 - GSPANN internship (Jun-Aug 2023): CNN-based pneumonia detection on chest X-rays; iterated on preprocessing and data augmentation to improve generalization.
 - Core skills: Python, TypeScript, JavaScript, FastAPI, Node.js, Express, React, Anthropic Claude, OpenAI APIs, tool calling, RAG, Qdrant, Pydantic, PostgreSQL, SQL, Docker, AWS S3, PyTorch, JWT/OAuth, RBAC, streaming/SSE.
+- chef-drop-brief (May 2026, https://github.com/sahilmehta17/chef-drop-brief): installable Claude Code Skill that drafts Braze-ready chef-drop lifecycle campaigns (email + SMS + push + A/B variants + send-time recommendation) for CookUnity-style meal-delivery launches. Built specifically for the CookUnity AI Native Engineer, Growth Marketing application — ports the Enidus eval-gated-LLM pattern to growth-marketing copy. MIT-licensed, single-line install, brand-agnostic via swappable reference fixtures.
+- chef-drop-brief — 9 deterministic copy evals that gate every draft before it ships: (1) claimed-fact verification against a pinned chef catalog (hallucination catch), (2) dietary-contradiction matching on chef tags, (3) banned-cliché regex, (4) brand-voice cosine similarity using sentence-transformers MiniLM-L6-v2 against seeded voice anchors, (5) channel-correct CTAs, (6) channel character limits, (7) personalization-token presence, (8) policy safety (no medical claims), (9) positive voice-signal detection (anthropomorphic verbs, wordplay, em-dash asides).
+- chef-drop-brief — field-scoped one-shot revision loop: when an eval fails, the pipeline regenerates only the failing field and keeps every other byte identical. Most "AI marketing tools" regenerate the whole draft on every retry; this preserves work and keeps revisions cheap.
+- chef-drop-brief — 20 pytest tests covering all 9 evals plus the revision logic and CLI surfaces.
+- chef-drop-brief target roles: Growth-AI / Lifecycle-AI / GTM-AI roles, DTC subscription companies, companies using Braze / Klaviyo / Customer.io / Postscript or similar lifecycle platforms, roles naming Claude Code / Claude Skills / MCP / AI workflow orchestration, and any role mentioning brand voice, copy eval, content quality pipelines, or marketing AI safety.
+- chef-drop-brief adjacency tags earned: Claude Code Skills, MCP, Anthropic SDK, Braze, lifecycle marketing, CRM, sentence-transformers, eval-driven LLM safety, structured-output, field-scoped revision loops.
 `.trim();
 
 const RESUME_BASE_JSON = {
@@ -130,6 +136,15 @@ const RESUME_BASE_JSON = {
       header: 'PROJECTS',
       items: [
         {
+          title: 'chef-drop-brief - Eval-Gated Lifecycle-Marketing Claude Skill',
+          date: 'May 2026 | Personal Project',
+          url: 'https://github.com/sahilmehta17/chef-drop-brief',
+          bullets: [
+            "Built an installable Claude Code Skill that drafts Braze-ready chef-drop lifecycle campaigns (email + SMS + push + A/B variants + send-time recommendation) for CookUnity-style meal-delivery launches; ports the Enidus eval-gated-LLM pattern to growth-marketing copy.",
+            "Engineered 9 deterministic copy evals that gate every draft before it ships — claimed-fact verification against a pinned chef catalog, dietary-contradiction matching, banned-cliché regex, brand-voice cosine similarity (sentence-transformers MiniLM-L6-v2) against seeded voice anchors, channel-correct CTAs and char limits, personalization-token checks, policy safety, and positive voice-signal detection — with a field-scoped one-shot revision loop that regenerates only the failing field; 20 pytest tests.",
+          ],
+        },
+        {
           title: 'ClaudeJob - Agentic Resume Tailoring Pipeline',
           date: 'April 2026 - Present | Personal Project',
           url: 'https://github.com/sahilmehta17/claudejob',
@@ -151,10 +166,10 @@ const RESUME_BASE_JSON = {
       type: 'skills',
       header: 'TECHNICAL SKILLS',
       items: [
-        { label: 'AI / LLM Systems', value: 'LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, vector search (Qdrant), prompt engineering, eval frameworks, structured outputs (Pydantic), streaming/SSE, PyTorch, TensorFlow' },
+        { label: 'AI / LLM Systems', value: 'LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, vector search (Qdrant), prompt engineering, eval frameworks, structured outputs (Pydantic), streaming/SSE, sentence-transformers, lifecycle marketing, PyTorch, TensorFlow' },
         { label: 'Languages', value: 'Python, JavaScript/TypeScript, Java, C, SQL, Kotlin, Swift, R. Cert: SnowPro Associate & Core (2024).' },
         { label: 'Frameworks', value: 'FastAPI, Node.js, Express, React, Next.js, Angular, Flask, Django, React Native' },
-        { label: 'Infra & Tools', value: 'PostgreSQL, REST, gRPC, AWS S3, GCP, Docker, Kubernetes, Git, Claude Code, JWT/OAuth, RBAC' },
+        { label: 'Infra & Tools', value: 'PostgreSQL, REST, gRPC, AWS S3, GCP, Docker, Kubernetes, Git, Claude Code, Claude Code Skills, MCP, Braze, JWT/OAuth, RBAC' },
       ],
     },
   ],
@@ -272,6 +287,22 @@ const ADJACENCY_MAP = {
   'llamaindex':       ['rag', 'qdrant', 'openai apis'],
   'openai sdk':       ['openai apis'],
   'anthropic sdk':    ['anthropic claude'],
+  'claude code':      ['anthropic claude', 'anthropic sdk'],
+  'claude code skills': ['anthropic claude', 'anthropic sdk', 'claude code'],
+  'claude skills':    ['anthropic claude', 'anthropic sdk', 'claude code'],
+  'mcp':              ['anthropic claude', 'tool calling'],
+  'model context protocol': ['anthropic claude', 'tool calling'],
+
+  // Embeddings / NLP libs
+  'sentence-transformers': ['anthropic claude', 'openai apis', 'rag', 'pytorch'],
+  'sentence transformers': ['anthropic claude', 'openai apis', 'rag', 'pytorch'],
+
+  // Lifecycle / CRM platforms — same audience-segmentation + templated-send model
+  'braze':            ['lifecycle marketing'],
+  'klaviyo':          ['lifecycle marketing', 'braze'],
+  'customer.io':      ['lifecycle marketing', 'braze'],
+  'postscript':       ['lifecycle marketing', 'braze'],
+  'iterable':         ['lifecycle marketing', 'braze'],
 
   // RPC / API styles
   'protobuf':         ['grpc'],

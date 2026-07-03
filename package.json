@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "generate:pii-safe": "node scripts/generate-pii-safe.js",
     "test": "node tests/ai.test.js",
     "regen-base": "node regenerate-base.js"
   },

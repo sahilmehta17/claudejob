@@ -6,6 +6,7 @@
 //   - {Candidate}_CoverLetter.txt    (raw text for paste-into-form)
 //   - {Candidate}_CoverLetter.pdf    (via generate_cover_letter.py)
 //   - JD_Analysis.json               (the structured JD breakdown)
+//   - JD_Original.txt                (the raw job-description text, for full traceability)
 //
 // Folder name format: {Company}_{Title}_{YYYY-MM-DD-HHMM}
 // Date suffix prevents collisions when re-running the same job.
@@ -54,7 +55,7 @@ function buildFolderName(company, title) {
 // awaited so the function only resolves once both PDFs are flushed to disk.
 // ─────────────────────────────────────────────────────────────────────────────
 async function saveApplicationBundle({
-  company, title, resumeJson, coverText, jdAnalysis, candidateName,
+  company, title, resumeJson, coverText, jdAnalysis, jdText, candidateName,
 }) {
   if (!resumeJson || !coverText) {
     throw new Error('saveApplicationBundle requires resumeJson and coverText');
@@ -70,6 +71,7 @@ async function saveApplicationBundle({
   const coverTxt  = path.join(folder, `${namePrefix}_CoverLetter.txt`);
   const coverPdf  = path.join(folder, `${namePrefix}_CoverLetter.pdf`);
   const jdJson    = path.join(folder, 'JD_Analysis.json');
+  const jdRawTxt  = path.join(folder, 'JD_Original.txt');
 
   // Write JD analysis JSON. Inject `company` and `title` into the saved
   // payload so the post-generation validator can verify the cover-letter
@@ -79,6 +81,13 @@ async function saveApplicationBundle({
   if (jdAnalysis) {
     const enriched = Object.assign({ company, title }, jdAnalysis);
     await fs.writeFile(jdJson, JSON.stringify(enriched, null, 2), 'utf8');
+  }
+
+  // Write the raw job description so each bundle is fully traceable back to the
+  // exact posting (the analysis JSON is lossy — it only keeps the structured
+  // breakdown, not the original text).
+  if (jdText && String(jdText).trim()) {
+    await fs.writeFile(jdRawTxt, String(jdText).trim() + '\n', 'utf8');
   }
 
   // Write cover letter as plain text.
@@ -113,7 +122,11 @@ async function saveApplicationBundle({
 
   return {
     folder,
-    files: { resumePdf, coverTxt, coverPdf, jdJson: jdAnalysis ? jdJson : null },
+    files: {
+      resumePdf, coverTxt, coverPdf,
+      jdJson: jdAnalysis ? jdJson : null,
+      jdRawTxt: (jdText && String(jdText).trim()) ? jdRawTxt : null,
+    },
     renderInfo: {
       resumeFallback: resumeResult ? resumeResult.fallback : 'none',
       resumeFillPct: resumeResult ? resumeResult.fillPct : null,

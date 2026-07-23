@@ -298,7 +298,19 @@ async function runChecks(folder) {
           'JD_Analysis.key_themes is missing or empty');
       }
       const lower = coverText.toLowerCase();
-      const hits = themes.filter(t => lower.includes(String(t).toLowerCase()));
+      // Token-overlap match instead of exact full-phrase substring. A theme
+      // like "Enterprise API Ecosystems" almost never appears verbatim, which
+      // produced false 0/N results. Count a theme as hit when a majority of its
+      // significant tokens (length >= 4, minus stopwords) appear in the letter.
+      const THEME_STOP = new Set(['and', 'the', 'for', 'with', 'of', 'to', 'in', 'a', 'an']);
+      const themeHit = (t) => {
+        const raw = String(t).toLowerCase();
+        const toks = raw.split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !THEME_STOP.has(w));
+        if (toks.length === 0) return lower.includes(raw); // short themes: exact
+        const present = toks.filter(w => lower.includes(w));
+        return present.length / toks.length >= 0.6;
+      };
+      const hits = themes.filter(themeHit);
       return makeCheck('cover_hits_themes', hits.length >= 3,
         `${hits.length}/${themes.length} themes hit: [${hits.join(', ')}]`);
     })(),

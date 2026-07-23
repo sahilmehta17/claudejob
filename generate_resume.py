@@ -354,7 +354,7 @@ DEFAULT_CONTENT = {
             "header": "PROFESSIONAL EXPERIENCE",
             "items": [
                 {
-                    "title": "Software Developer, Enidus USA LLC. (Full-Time)",
+                    "title": "AI/Full-Stack Engineer, Enidus USA LLC. (Full-Time)",
                     "date": "June 2025 - Present",
                     "location": "Hicksville, NY",
                     "subsections": [

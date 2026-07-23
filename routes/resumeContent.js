@@ -22,7 +22,7 @@ const PHONE = process.env.RESUME_PHONE || '608-960-5508';
 // ─────────────────────────────────────────────────────────────────────────────
 const CANDIDATE_FACTS = `
 - B.S. Computer Science + B.S. Data Science, UW-Madison (graduated May 2025; ~1 year full-time experience since)
-- Full-time SWE at Enidus USA LLC (June 2025 - present): sole engineer on three plugins for T-Mobile for Business enterprise portal
+- Full-time AI/Full-Stack Engineer at Enidus USA LLC (June 2025 - present): sole engineer on three plugins for T-Mobile for Business enterprise portal
 - DOMAIN EXPERIENCE: ships production AI against regulated enterprise telecom data — billing account numbers (BANs), device SKUs/IMEIs, line state transitions (active/suspended/ported/cancelled), multi-tenant reseller hierarchies (resellers managing enterprise customer accounts). Real audit-traceable state-mutating operations on real customer data, not toy datasets. The kind of regulatory-shaped work that maps cleanly to financial services, healthcare, and other regulated-enterprise AI domains.
 - Plugin 1 — Agentic AI Copilot: 53 intents, 43 Pydantic-typed tool handlers, stage-and-confirm safety pattern (every write requires user approval), 52 pytest cases parametrized to 400+ invocations, zero LLM-hallucination incidents in pilot with 15 reseller tenants / 25+ enterprise customers / 100+ daily portal users. Stack: FastAPI, Python, Qdrant per-tenant collections, Claude / GPT-4 function-calling, PostgreSQL with row-level security, 8-role RBAC.
 - Engineering depth — hybrid retrieval: designed a hybrid retrieval pipeline combining Qdrant vector search with BM25 keyword retrieval via Reciprocal Rank Fusion (RRF, k around 60), with optional Cohere/Voyage re-ranker as a cost-gated precision pass for the device catalog and forthcoming knowledge base. Productionized Qdrant Cloud (aria-prod cluster, AWS us-east-1) with local Docker fallback for offline dev.
@@ -65,40 +65,39 @@ const RESUME_BASE_JSON = {
   summary: '',
   sections: [
     {
-      type: 'education',
-      header: 'EDUCATION',
-      items: [
-        {
-          institution: 'University of Wisconsin, Madison',
-          degree: 'B.S. in Computer Science | B.S. in Data Science (double major)',
-          graduation: 'Graduation: May 2025',
-        },
-      ],
-    },
-    {
       type: 'experience',
       header: 'PROFESSIONAL EXPERIENCE',
       items: [
         {
-          title: 'Software Developer, Enidus USA LLC. (Full-Time)',
+          // Company-as-header format (Enidus only): `title` holds the company,
+          // rendered as the bold header line with date/location; `role` renders
+          // as an italic subline beneath. Orahi/GSPANN keep the single-line
+          // "Role, Company (Internship)" title with no `role` field.
+          title: 'Enidus USA LLC. (Full-Time)',
+          role: 'AI/Full-Stack Engineer',
           date: 'June 2025 - Present',
           location: 'Hicksville, NY',
           subsections: [
             {
               name: 'AI Chatbot & Agentic Copilot for T-Mobile for Business',
               bullets: [
-                "Shipped an AI assistant for T-Mobile for Business enabling natural-language queries over telecom account data plus multi-step account actions (device purchase, line suspension, plan upgrades); currently in pilot with 15 reseller tenants representing 25+ enterprise customers and 100+ daily portal users.",
-                "Engineered an agentic workflow that stages each transaction in an inline panel for user confirmation before backend execution; agent orchestration without autonomous write access.",
-                "Authored a parametrized pytest eval suite (52 hand-designed cases fanning out to 400+ distinct test invocations) covering intent dispatch, planning, and execution; caught the agent hallucinating tool arguments (non-existent device SKUs, malformed BANs) early in development.",
-                "Architected defense-in-depth safety: Pydantic-validated tool schemas + strict tool gating at the LLM boundary (model constrained to tool selection only, never raw SQL), then parameterized SQL templates + session-scoped row-level security + 8-role RBAC at the execution boundary, with per-tenant Qdrant collections for retrieval isolation.",
-                "Implemented hybrid retrieval pipeline (Qdrant vector + BM25 + Reciprocal Rank Fusion); led routing-architecture pivot from lexical-first to vector-first for consumer-facing paraphrase tolerance.",
+                "Shipped a multi-tenant conversational AI assistant for a T-Mobile IoT reseller platform (FastAPI, Anthropic Claude / OpenAI function-calling, Qdrant, PostgreSQL on Azure); 9 LLM-orchestrated workflows collapse 10-12 portal clicks per reseller action into a single natural-language command. In pilot with 15 tenants, 25+ customers, 100+ users.",
+                "Designed a hybrid retrieval layer combining Qdrant vector search with BM25 keyword retrieval via Reciprocal Rank Fusion (k=60) and regex fast-paths for identifier inputs; led a vector-first routing inversion when the product pivoted consumer-facing, moving intent top-1 accuracy from 73.5% to 89.0% on a 442-query eval corpus.",
+                "Built defense-in-depth safety at the LLM boundary: 43 Pydantic-typed tool handlers with RBAC-filtered catalogs the model never sees in full, parameterized SQL templates with row-level security at execution, per-tenant Qdrant isolation, and user-confirmed writes; zero hallucination incidents in pilot.",
+                "Migrated in-memory session state to a durable SQL-backed flow state machine (optimistic locking, automatic session expiration), preserving 9 multi-step transaction flows across deploys and worker scaling.",
               ],
             },
             {
               name: 'Custom Reports & Dashboards Platform',
               bullets: [
                 "Owned a self-serve full-stack analytics product end-to-end alone (React, Node.js + Express, SQL Server with stored procedures) letting enterprise customers compose reports, custom dashboards, and charts over their own data; cut analytics turnaround from days to minutes.",
-                "Hardened against multi-tenant attack classes via stored-procedure CRUD contracts, two-layer filter validation, runtime tenant-clause injection, JWT auth, per-session CSRF rotation, strict CSP, and AES-256-CBC encryption for stored Excel passwords.",
+                "Hardened against multi-tenant attack classes via stored-procedure CRUD contracts, two-layer filter validation, runtime tenant-clause injection, JWT auth, per-session CSRF rotation, strict CSP, and AES-256-CBC encryption.",
+              ],
+            },
+            {
+              name: 'Carrier API Gateway (BFF)',
+              bullets: [
+                "Built a TypeScript BFF (Node.js + Express) as the sole integration layer to T-Mobile's carrier APIs, with per-request RS256 Proof-of-Possession token generation over OAuth 2.0 and a translation layer mapping legacy portal formats to the new PIL API contract.",
               ],
             },
           ],
@@ -135,13 +134,22 @@ const RESUME_BASE_JSON = {
       type: 'projects',
       header: 'PROJECTS',
       items: [
+        // NOTE: chef-drop-brief intentionally NOT in BASE — its 2 bullets
+        // (771 chars) pushed total over the 1-page render budget. The project
+        // remains in CANDIDATE_FACTS (cover letters + tailored resumes pull
+        // it from there) and in ADJACENCY_MAP (Claude Code Skills / MCP /
+        // Braze / lifecycle-marketing JDs still trigger its adjacency tags).
+        // For Growth-AI roles where chef-drop-brief should lead the resume,
+        // the LLM tailoring step pulls it from CANDIDATE_FACTS and inserts
+        // ahead of ClaudeJob — see the targeted regenerate scripts in
+        // scripts/regenerate_*.js for examples.
         {
-          title: 'chef-drop-brief - Eval-Gated Lifecycle-Marketing Claude Skill',
-          date: 'May 2026 | Personal Project',
-          url: 'https://github.com/sahilmehta17/chef-drop-brief',
+          title: 'CloudGuard - Reliability & Safety Harness for LLM Cloud Agents',
+          date: 'July 2026 | Personal Project',
+          url: 'https://github.com/sahilmehta17/cloudguard',
           bullets: [
-            "Built an installable Claude Code Skill that drafts Braze-ready chef-drop lifecycle campaigns (email + SMS + push + A/B variants + send-time recommendation) for CookUnity-style meal-delivery launches; ports the Enidus eval-gated-LLM pattern to growth-marketing copy.",
-            "Engineered 9 deterministic copy evals that gate every draft before it ships — claimed-fact verification against a pinned chef catalog, dietary-contradiction matching, banned-cliché regex, brand-voice cosine similarity (sentence-transformers MiniLM-L6-v2) against seeded voice anchors, channel-correct CTAs and char limits, personalization-token checks, policy safety, and positive voice-signal detection — with a field-scoped one-shot revision loop that regenerates only the failing field; 20 pytest tests.",
+            "Built a test-driven eval and safety harness (Python, FastAPI, MCP, sentence-transformers) for LLM agents operating cloud infrastructure against a real AWS mock (Moto); 57 tests, all headline numbers written to committed JSON artifacts.",
+            "Showed a bag-of-words tool-router degrades tool-selection to 0.83 while an embeddings router recovers it to 1.00 (Sonnet and Haiku); added blast-radius guardrails (1.00 precision and recall) and an indirect prompt-injection red-team cutting the hijack-attempt rate to 0 percent.",
           ],
         },
         {
@@ -153,12 +161,25 @@ const RESUME_BASE_JSON = {
             "Engineered a validator suite mirroring LLM-content failure modes: 30+ banned AI-resume cliché regex, source-fact validation against a pinned base to catch fabricated stats, and a jargon-lead heuristic. Deterministic adjacency-skill injection (curated, never LLM-fabricated); 47 passing unit tests.",
           ],
         },
+        // NOTE: Denari RAG capstone moved OUT of BASE on 2026-07-23 to make room
+        // for CloudGuard while keeping the resume on one page (adding CloudGuard's
+        // 2 bullets + a third project header pushed the render to 2 pages; the
+        // third header is the load-bearing cost, not just the bullet chars). Denari
+        // remains fully in CANDIDATE_FACTS above, so cover letters and per-JD
+        // tailored resumes still pull it; for capstone/academic-heavy JDs the
+        // tailoring step can reinsert it ahead of a weaker entry.
+      ],
+    },
+    {
+      // Education moved below experience + projects (2026-07-23): with ~1 year
+      // of full-time experience plus strong projects, the work leads; the degree
+      // sits just above skills. Graduation date removed per preference.
+      type: 'education',
+      header: 'EDUCATION',
+      items: [
         {
-          title: 'RAG Pipeline - Denari AI Capstone',
-          date: 'January 2025 - May 2025 | Madison, WI',
-          bullets: [
-            "Productionized a full-stack RAG system over 22K+ documents and 300K+ embeddings (TypeScript, TimescaleDB, Docker, S3, OpenAI APIs); hybrid retrieval (BM25 + TF-IDF) with semantic re-ranking achieving 73% QA accuracy and 40% query-latency reduction; led Agile/Scrum delivery of 25+ production features across ingestion, embeddings, DB, and retrieval.",
-          ],
+          institution: 'University of Wisconsin, Madison',
+          degree: 'B.S. in Computer Science | B.S. in Data Science (double major)',
         },
       ],
     },
@@ -203,6 +224,7 @@ function renderResumeText(json) {
       for (const item of section.items) {
         const right = [item.date, item.location].filter(Boolean).join(' | ');
         lines.push(`${item.title}  ${right}`.trim());
+        if (item.role) lines.push(item.role);
         for (const sub of item.subsections || []) {
           if (sub.name) lines.push(sub.name);
           for (const b of sub.bullets || []) lines.push(`• ${b}`);
@@ -284,6 +306,7 @@ const ADJACENCY_MAP = {
 
   // LLM frameworks
   'langchain':        ['anthropic claude', 'openai apis', 'function-calling'],
+  'langgraph':        ['langchain', 'anthropic claude', 'openai apis', 'function-calling', 'tool calling'],
   'llamaindex':       ['rag', 'qdrant', 'openai apis'],
   'openai sdk':       ['openai apis'],
   'anthropic sdk':    ['anthropic claude'],

@@ -136,6 +136,14 @@ function subSectionPara(text) {
   });
 }
 
+// Italic role subline under a company-as-header job (matches PDF drawRole).
+function rolePara(text) {
+  return new Paragraph({
+    spacing: spacing(),
+    children: [new TextRun({ text, italics: true, font: FONT, size: BODY_SIZE })],
+  });
+}
+
 function bulletPara(text) {
   return new Paragraph({
     numbering: { reference: 'resume-bullets', level: 0 },
@@ -253,6 +261,7 @@ async function renderResumeDocx(content, outPath) {
     } else if (section.type === 'experience') {
       for (const item of section.items || []) {
         children.push(titlePara(item.title, item.date, item.location));
+        if (item.role) children.push(rolePara(item.role));
         for (const sub of item.subsections || []) {
           if (sub.name) children.push(subSectionPara(sub.name));
           for (const b of sub.bullets || []) children.push(bulletPara(b));

@@ -5,6 +5,21 @@ const { RESUME_BASE_JSON, CANDIDATE_FACTS, renderResumeText, applyAdjacency, sum
 const { saveApplicationBundle } = require('./saveBundle');
 const { runChecks: runBundleChecks } = require('../scripts/validate');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Tailoring char budget — carries a SAFETY MARGIN below the base's actual
+// 1-page char count (BASE_BULLET_CHAR_BUDGET). The base fills the page's line
+// budget almost exactly, and per-JD tailoring GROWS the skills section
+// (deterministic adjacency injection appends JD skills, and the model expands /
+// renames categories), which adds 1-2 lines the base doesn't carry. If tailored
+// bullets are allowed up to the base's full char count, that extra skills height
+// spills to page 2 and the whole tailoring is discarded (fallback to base).
+// Capping tailored bullets ~10% under the base reserves those lines for skills.
+// Tune these three multipliers if the fallback still fires or pages underfill.
+// ─────────────────────────────────────────────────────────────────────────────
+const TAILOR_CHAR_CAP = Math.round(BASE_BULLET_CHAR_BUDGET * 0.90);    // hard max shown to the model
+const TAILOR_CHAR_TARGET = Math.round(BASE_BULLET_CHAR_BUDGET * 0.85); // aim-for middle of the window
+const TAILOR_CHAR_MIN = Math.round(BASE_BULLET_CHAR_BUDGET * 0.80);    // below this the page reads sparse
+
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -39,10 +54,11 @@ const RESUME_BANNED_REGEX = new RegExp(
 
 // Source facts extracted from RESUME_BASE for validation
 const SOURCE_FACTS = {
-  numbers: ['80%', '15%', '10%', '97%', '22K+', '300K+', '73%', '40%', '25+', '52',
+  numbers: ['80%', '15%', '10%', '97%', '22K+', '300K+', '73%', '73.5%', '89.0%',
+            '70%+', '40%', '25+', '52', '442',
             '8 RBAC', '4 Qdrant', '6-intent', '9 SQL', '6 field', '3-layer', '100%',
-            '53-intent', '43', '20', '6.2K', '15K', '3 tokens', '10+', '60 seconds',
-            'RS256', 'HS256', 'PIL', 'Next.js 16', 'React 19'],
+            '100+', '53-intent', '43', '20', '6.2K', '15K', '3 tokens', '10+', '30+',
+            '60 seconds', 'RS256', 'HS256', 'PIL', 'Next.js 16', 'React 19'],
   companies: ['Enidus USA', 'Orahi', 'GSPANN', 'Denari', 'T-Mobile'],
   tools: ['Node.js', 'Express', 'Angular', 'FastAPI', 'GPT-4o-mini', 'Qdrant',
           'TypeScript', 'TimescaleDB', 'Docker', 'S3', 'OpenAI', 'Flask',
@@ -51,8 +67,9 @@ const SOURCE_FACTS = {
           'BM25', 'TF-IDF', 'PyTorch', 'TensorFlow', 'Keras', 'Scikit-learn',
           'Apache Spark', 'Hadoop', 'Kafka', 'Pandas', 'NumPy',
           'Python', 'Java', 'JavaScript', 'C', 'Kotlin', 'Swift', 'R',
-          'GraphQL', 'REST', 'gRPC', 'AWS S3', 'Git', 'Bash', 'Postman', 'JIRA',
-          'JWT', 'OAuth', 'PoP', 'node:test'],
+          'GraphQL', 'REST', 'gRPC', 'AWS', 'AWS S3', 'Git', 'Bash', 'Postman', 'JIRA',
+          'JWT', 'OAuth', 'PoP', 'node:test',
+          'Reciprocal Rank Fusion', 'Cohere', 'Voyage'],
 };
 
 /**
@@ -76,6 +93,14 @@ function validateResumeOutput(resumeText) {
     warnings.push(`Contains banned AI-resume phrases: ${unique.join(', ')}`);
   }
 
+  // Em-dash / en-dash guard. These are a strong AI-writing tell and are
+  // prohibited in resume output. The prompt bans them, but the LLM occasionally
+  // slips one in, so flag it here as a hard fail the UI can surface.
+  const dashMatches = resumeText.match(/[—–]/g);
+  if (dashMatches) {
+    warnings.push(`Contains em/en-dashes (${dashMatches.length}) — prohibited as an AI tell; replace with colon/semicolon/comma/period`);
+  }
+
   // Check that core sections exist.
   // Match the section name as a whole word against the raw (case-sensitive) text:
   // headers are rendered in uppercase, body values are mixed-case, so this
@@ -95,7 +120,10 @@ function validateResumeOutput(resumeText) {
   }
 
   // Check for numbers not in source (possible fabrication)
-  const outputNumbers = resumeText.match(/\d+%|\d+K\+|\d+\+/g) || [];
+  // Regex captures: decimal percentages with optional trailing + (e.g. 73.5%, 70%+),
+  // K-shorthand (22K+), and bare numeric + (25+, 100+). Decimal handling added when
+  // the ARIA bullets introduced 73.5% / 89.0% / 70%+ as source-of-truth facts.
+  const outputNumbers = resumeText.match(/\d+(?:\.\d+)?%\+?|\d+K\+|\d+\+/g) || [];
   const sourceNumberSet = new Set(SOURCE_FACTS.numbers);
   const suspiciousNumbers = outputNumbers.filter(n => !sourceNumberSet.has(n) && !['100%'].includes(n));
   if (suspiciousNumbers.length > 0) {
@@ -138,7 +166,8 @@ function validateResumeOutput(resumeText) {
 
   const valid = bannedFound.length === 0
     && warnings.filter(w => w.includes('fabrication')).length === 0
-    && jargonLeadBullets.length === 0;
+    && jargonLeadBullets.length === 0
+    && !warnings.some(w => w.includes('em/en-dashes'));
   return { valid, warnings, bannedFound };
 }
 
@@ -196,6 +225,41 @@ async function streamText(prompt, maxTokens, onChunk) {
 }
 
 /**
+ * Deterministic em/en-dash remover for generated prose (cover letters, Q&A).
+ * The prompt bans dashes, but the model occasionally slips one in, so this is
+ * the hard guarantee. Replaces a dash (with any surrounding spaces) by a comma
+ * + single space when it joins clauses mid-sentence, then cleans up any double
+ * punctuation artifacts. Idempotent.
+ */
+function sanitizeDashes(text) {
+  if (!text || typeof text !== 'string') return text;
+  return text
+    // " — ", "—", " –", etc. → ", "
+    .replace(/\s*[—–]\s*/g, ', ')
+    // collapse "word, , " or punctuation followed by stray comma
+    .replace(/([,;:])\s*,\s+/g, '$1 ')
+    // ", ." or ", ;" → drop the orphan comma before terminal punctuation
+    .replace(/,\s*([.;:!?])/g, '$1')
+    // tidy any doubled spaces introduced above
+    .replace(/ {2,}/g, ' ');
+}
+
+/**
+ * Strip markdown emphasis/code markers from generated prose. The cover-letter
+ * and Q&A renderers output PLAIN TEXT, so any **bold**, *italics*, or `code`
+ * the model emits renders as literal asterisks/backticks. Cover letters need
+ * none of these, so we remove the markers (keeping the inner words). Underscores
+ * are left alone to avoid mangling identifiers like ai_flow_state. Idempotent.
+ */
+function stripMarkdown(text) {
+  if (!text || typeof text !== 'string') return text;
+  return text
+    .replace(/\*/g, '')       // ** bold ** and * italic * emphasis markers
+    .replace(/`/g, '')        // `code` backticks
+    .replace(/ {2,}/g, ' ');  // tidy any doubled spaces left behind
+}
+
+/**
  * Safely parse JSON from model output, stripping markdown fences.
  * Returns { data, error } — never throws.
  */
@@ -215,6 +279,12 @@ function safeParseJSON(raw) {
 // HARDENED RESUME PROMPT — conservative, source-grounded, anti-fabrication
 // ─────────────────────────────────────────────────────────────────────────────
 function buildResumePrompt(job, emphasis) {
+  // Never expose the real contact block to the LLM. It has mutated URLs before
+  // (2026-07-08 Glean run typo'd the LinkedIn slug). Swap in a sentinel; the
+  // real contact is pinned downstream by the identity lock. This removes the
+  // chance to corrupt it at the source.
+  const promptResume = JSON.parse(JSON.stringify(RESUME_BASE_JSON));
+  promptResume.contact = ['CONTACT_INJECTED_DOWNSTREAM_DO_NOT_MODIFY'];
   return `You are tailoring a resume for a specific job. Your ONLY job is conservative editing — NOT rewriting.
 
 You are tailoring a 1-page resume. Layout discipline matters as much as content relevance.
@@ -225,12 +295,14 @@ JD: ${job.desc}
 EMPHASIS: ${emphasis}
 
 SOURCE RESUME (this is the ONLY source of truth — JSON, the canonical schema):
-${JSON.stringify(RESUME_BASE_JSON, null, 2)}
+${JSON.stringify(promptResume, null, 2)}
 
 OUTPUT FORMAT: Return ONLY a JSON object matching the SAME SCHEMA as the source above. No markdown fences, no commentary, no prose explanation. The JSON will be parsed by JSON.parse() — anything other than valid JSON breaks the pipeline.
 
 You may modify the values within bullets/skills (per rules below). You MUST preserve:
-  - The top-level keys (name, contact, sections)
+  - The top-level keys (name, contact, sections). Output the \`contact\` value
+    EXACTLY as given (the sentinel string). It is replaced downstream. Never
+    invent, reformat, expand, or "correct" any contact URL, email, or phone.
   - Section types and order keys
   - Item structure (title/date/location/subsections, etc.)
   - All numbers, percentages, dates, company names, and tool names exactly
@@ -256,9 +328,9 @@ If the JD title contains AI keywords (AI, ML, LLM, GenAI, Agentic, Intelligent) 
 STRICT RULES — violations will cause rejection:
 
 HARD CHARACTER BUDGET (most important rule — output is rejected if violated):
-- The total character count of all bullet text across experience + projects sections must NOT exceed ${BASE_BULLET_CHAR_BUDGET} characters.
-- This is the budget the base resume uses, which fits on exactly 1 page. Tailored versions that exceed this budget overflow page 1 and trigger fallback to the base resume — meaning your tailoring is discarded entirely.
-- Count BEFORE submitting: sum the .length of every bullet string. If your output exceeds ${BASE_BULLET_CHAR_BUDGET}, COMPRESS bullets: drop redundant clauses, tighten phrasing, or drop the lowest-relevance bullet entirely.
+- The total character count of all bullet text across experience + projects sections must NOT exceed ${TAILOR_CHAR_CAP} characters.
+- This budget sits deliberately BELOW the base resume's own char count, because the tailored skills section runs 1-2 lines taller than the base (JD-matched skills get appended and categories expand). Reserving those lines for skills is why bullets are capped here. Tailored versions that exceed this budget overflow page 1 and trigger fallback to the base resume — meaning your tailoring is discarded entirely.
+- Count BEFORE submitting: sum the .length of every bullet string. If your output exceeds ${TAILOR_CHAR_CAP}, COMPRESS bullets: drop redundant clauses, tighten phrasing, or drop the lowest-relevance bullet entirely.
 - Skills section is constrained separately (4 lines). This budget applies only to bullet content.
 - This budget OVERRIDES all other content goals. If preserving a JD-keyword anchor or following verb diversity would push you over budget, COMPRESS something else FIRST. The budget is non-negotiable.
 
@@ -279,9 +351,12 @@ HARD CHARACTER BUDGET (most important rule — output is rejected if violated):
    - Pretend the candidate has experience they don't have
    - Add a summary/objective section
    - Change the format, section headers, or structure
+   - Use em-dashes (—) or en-dashes (–) ANYWHERE. They are a strong AI-writing tell and are strictly prohibited. Use a colon, semicolon, comma, parentheses, or period instead. This applies to every bullet without exception.
 
 LAYOUT CONSTRAINTS (hard requirements — output is rejected if violated):
-- The tailored resume MUST FILL exactly 1 page (A4, 17pt margins, Times-Roman 11pt, 13pt line height). A half-page or 3/4-page output is just as broken as a 2-page output — the full page must be used. Target ~4000-4800 characters of bullet content combined across all sections; anything under 3500 is too sparse and gets rejected.
+- The tailored resume MUST fit on exactly 1 page (A4, 17pt margins, Times-Roman 11pt, 13pt line height). Going to page 2 triggers fallback to the base resume — meaning your tailoring is discarded entirely. A roughly 90%-full page is fine; a half-page output is too sparse.
+- HARD MAXIMUM ${TAILOR_CHAR_CAP} chars across experience + projects bullet content. This is set below the base resume's own char count on purpose, to reserve 1-2 lines for the taller tailored skills section. EVEN AT this cap your output may overflow because word-wrap depends on which specific words you choose, so do NOT ride the cap. TARGET ${TAILOR_CHAR_TARGET} chars to leave wrap-safety plus skills-growth margin. MINIMUM ${TAILOR_CHAR_MIN} chars — below this the page reads sparse.
+- The acceptable window is ${TAILOR_CHAR_MIN} to ${TAILOR_CHAR_CAP}; aim for the MIDDLE of the window (~${TAILOR_CHAR_TARGET} chars), NOT the top. Aiming for the cap guarantees occasional overflow because word-wrap is non-deterministic across rephrasings and the skills section adds height the bullet count cannot see.
 - PRESERVE every role, internship, and project from the base resume. Do NOT drop entire roles (e.g., GSPANN, Orahi) or subsections. Reorder is fine; deletion is not.
 - PRESERVE bullet count per subsection. Tighten wording inside a bullet if needed; do not silently drop bullets. Dropping a bullet is acceptable ONLY if keeping it would force overflow to page 2.
 - Each bullet should be 20-35 words. Bullets under 15 words read as filler and get rejected. Bullets over 40 words wrap to too many lines.
@@ -312,7 +387,7 @@ When rewriting bullets for verb diversity or JD-focus reordering, PRESERVE any t
 - The skills section listing is necessary but not sufficient. Bullets must demonstrate use of the JD keywords, not just claim them.
 
 SUBSECTION REORDERING (JD-focus-aware):
-Within the "Software Developer, Enidus USA LLC." experience item, the Enidus subsections (AI Chatbot & Agentic Copilot, Custom Reports & Dashboards Platform, and any others) should be ordered based on JD FOCUS:
+Within the "AI/Full-Stack Engineer, Enidus USA LLC." experience item, the Enidus subsections (AI Chatbot & Agentic Copilot, Custom Reports & Dashboards Platform, and any others) should be ordered based on JD FOCUS:
   - frontend → lead with Custom Reports & Dashboards Platform (React frontend), then AI Copilot.
   - backend → lead with AI Copilot (FastAPI backend depth), then Reports.
   - ai_infra → lead with AI Copilot (the headline agentic work), then Reports.
@@ -471,24 +546,38 @@ Return this JSON (no markdown fences, no commentary):
       tailoredJson = parsed.data;
     }
 
+    // LOCK identity fields. The tailoring LLM has mutated contact/name despite
+    // the "preserve" instruction (2026-07-08 Glean run typo'd the LinkedIn slug
+    // to ...87357b1b1b9, which flowed into both PDFs). Contact and name are
+    // never tailored, so pin them to the base every run. Deep-clone so no
+    // downstream mutation can leak back into RESUME_BASE_JSON. saveBundle.js
+    // reads resumeJson.contact, so this also protects the cover PDF header.
+    tailoredJson.contact = JSON.parse(JSON.stringify(RESUME_BASE_JSON.contact));
+    tailoredJson.name = RESUME_BASE_JSON.name;
+
     // Post-LLM character-budget audit. Warn-only — the 3-tier render fallback
     // in pdfRender.js is the real safety net. This log gives a clear signal
     // BEFORE the render attempts, so prompt drift (LLM ignoring the budget
     // rule) is visible in the server console without waiting for a fallback.
     try {
       const tailoredChars = sumBulletChars(tailoredJson);
-      const overBudget = tailoredChars - BASE_BULLET_CHAR_BUDGET;
+      // Audit against the margin-adjusted cap the prompt actually asks for, not
+      // the raw base char count — the cap is what keeps the skills section on page.
+      const overBudget = tailoredChars - TAILOR_CHAR_CAP;
       if (overBudget > 0) {
         console.warn(
           `[ai.tailoring] tailored output exceeds char budget by ${overBudget} chars ` +
-          `(${tailoredChars} of ${BASE_BULLET_CHAR_BUDGET}) — render fallback likely to fire`
+          `(${tailoredChars} of ${TAILOR_CHAR_CAP} cap; base ${BASE_BULLET_CHAR_BUDGET}) — render fallback likely to fire`
         );
       } else if (overBudget < -200) {
-        // Tailored is significantly under-budget — flag for the opposite reason
-        // (page may render thin even after gap distribution).
+        // Tailored is significantly under-budget — flag for the opposite
+        // reason: page will render with bottom whitespace (the underfill gap
+        // expansion in pdfRender was disabled because it produced visibly
+        // puffy spacing vs the BASE render; tailored output now renders at
+        // baseline gaps and any shortfall lands below the last section).
         console.log(
           `[ai.tailoring] tailored output is ${-overBudget} chars under budget ` +
-          `(${tailoredChars} of ${BASE_BULLET_CHAR_BUDGET}) — page may underfill`
+          `(${tailoredChars} of ${TAILOR_CHAR_CAP} cap) — page may underfill`
         );
       }
     } catch (e) {
@@ -534,25 +623,59 @@ JD-specific tech tags from this listing: ${job.tags.join(', ')}.
 
 TARGET: ${job.title} at ${job.company}
 JD: ${job.desc}
-TONE: Confident & direct
 
-RULES:
-- 3 tight paragraphs: opening hook → core evidence → confident close
-- NO filler: never use "I am excited to apply", "I would be a great fit", "I am writing to express my interest", "passionate about", "excited to bring", "proven track record"
-- Write as Sahil, first person, natural and specific
-- Reference 2-3 specific achievements WITH exact numbers from the candidate facts above
-- Name the company and role specifically
-- End with a direct, confident call to action
-- DO NOT fabricate any claim, metric, or experience not listed above
-- Return ONLY the letter body (no date, no header, no "Dear Hiring Manager")
-- If the TARGET company is in a regulated-enterprise domain (financial services, banking, telecom, healthcare, insurance, government, fintech, regtech, compliance tech), explicitly highlight in one body paragraph that the candidate has shipped production AI against regulated enterprise data (T-Mobile billing accounts, device identifiers, line state transitions, multi-tenant reseller hierarchies, audit-traceable state-mutating operations). This is a 0-3yr engineer differentiator — most candidates at this level have only touched toy datasets. Do NOT include this paragraph if the TARGET is a pure AI-research shop or general-purpose tooling company where regulated-data experience isn't load-bearing.`;
+VOICE:
+You're writing a letter that sounds like Sahil — a competent engineer who's thought carefully about why he wants this specific role — not a recruiter pitch optimized for keyword density. The reader should feel like they're meeting the candidate, not reading a stat sheet.
+
+STRUCTURE (4 short paragraphs):
+1. Opening — "Dear [hiring team or specific person]," then 2-3 sentences saying why THIS role specifically — what's distinctive about the work this company does, what about it pulled you in. Use the company's own language where natural. No "I'm applying because I'm excited about..."
+2. The one specific moment — build the letter around exactly ONE concrete moment of judgment from the candidate's work. A bug caught, a tradeoff made, a wrong path corrected. Show the THINKING, not just the outcome. ~5-7 sentences. This paragraph carries the letter's credibility — everything else is scaffolding.
+3. Conviction transfer — 2-3 sentences mapping that conviction to what the company is hiring for. What's the principle you'd bring? Where would it apply in their specific work?
+4. Brief stack + close — 2-3 sentences naming the relevant tools (Python, TypeScript, etc.). Personal-project references are DOMAIN-GATED per the matrix below. If the JD's company description spent real words on values/culture (words like "humble", "hungry", "ownership", "transparency", "bring the weather"), mirror 1-2 of those values back in plain language. If the JD is purely transactional, skip the values mirror — don't force it. End with "Best,\\nSahil Mehta".
+
+PERSONAL-PROJECT DOMAIN GATING (HARD RULE):
+Reference a specific personal project with its GitHub URL ONLY when the JD's domain directly matches the project's domain. Default behavior is NO project reference — the eval-driven conviction from Enidus T-Mobile carries the safety/quality anchor for most letters. Use the matrix:
+
+- chef-drop-brief (github.com/sahilmehta17/chef-drop-brief) — Growth/Lifecycle/Marketing-AI/CRM/Braze/Klaviyo/Customer.io/Postscript/Iterable/DTC subscription roles. Anything where the JD names lifecycle marketing, copy generation at scale, audience segmentation, or marketing-automation platforms. Outside this domain, drop entirely — referencing a marketing-AI project on a Rubrik security or Applied Intuition AV resume reads as bolted on and pattern-matches the candidate as a Growth-AI person to readers who don't care.
+
+- ClaudeJob (github.com/sahilmehta17/claudejob) — forward-deployed-engineer, agentic-tool-building, LLM-pipeline-orchestration, AI-DevTools, or implementation-engineer roles where the meta-flex ("I use AI to apply to AI jobs") is on-tone. Skip for traditional backend, infra, or non-AI engineering roles.
+
+- Denari RAG (capstone, no public repo) — explicit RAG / retrieval / vector-DB / enterprise-search roles. Reference by name + scale ("300K-embedding RAG over 22K docs, 73% QA accuracy") without a URL.
+
+If none of the above projects match the JD domain cleanly, do NOT manufacture a project reference. The Enidus T-Mobile copilot is already the centerpiece of paragraph 2; that's sufficient credibility. A forced "I also built X" sentence at the end weakens an otherwise focused letter.
+
+HARD RULES — violations cause rejection:
+- Maximum 3 specific numbers across the entire letter. Each number must be a concrete anchor (specific scope or specific outcome), not a generic count. "Zero hallucination incidents" counts as a number. "15 tenants, 100+ users, 52 evals, 400+ invocations" is 4 numbers and would be rejected. Pick the 2-3 that matter most for this JD; drop the rest.
+- ZERO em-dashes (—) or en-dashes (–) anywhere in the letter. They are a strong AI-writing tell and are strictly prohibited. Use commas, periods, colons, semicolons, or parentheses instead. Not even one is acceptable.
+- No bullet lists or numbered lists. Prose only.
+- NO markdown formatting of any kind: no **bold**, no *italics*, no \`code\` backticks, no headers. The letter is rendered as plain text, so any asterisk or backtick shows up literally and looks broken. Write emphasis through word choice, not symbols.
+- No banned phrases: "leveraged", "spearheaded", "utilized", "results-driven", "dynamic professional", "passionate about", "excited to bring", "proven track record", "cutting-edge", "synergized", "revolutionized", "transformative", "game-changing", "best-in-class", "thought leader", "self-starter", "go-getter", "drove innovation", "deep expertise", "seasoned", "extensive experience", "ports the pattern", "stands out", "different domain", "the model".
+- No "I'm excited to apply" / "I would be a great fit" / "I am writing to express my interest" — that whole register is forbidden.
+- Write as Sahil, first person, plain language. A reader who doesn't know FastAPI from Flask should still be able to follow the story in paragraph 2.
+
+DO NOT fabricate any claim, metric, or experience not listed in CANDIDATE FACTS. Do not embellish scope. Do not round numbers.
+
+REGULATED-DOMAIN NOTE (use only if it fits the narrative — do NOT bolt it on as a separate paragraph):
+If the TARGET company is in financial services, banking, telecom, healthcare, insurance, government, fintech, regtech, or compliance tech, the production-AI-against-regulated-enterprise-data signal is legitimately load-bearing — work it into paragraph 2 as part of the specific moment (e.g., "the dataset was customer billing data, where a hallucinated tool argument means a wrong invoice"). If the TARGET is general-purpose tooling or pure AI research, skip this signal entirely.
+
+REGULATED-DOMAIN CANDIDATE-FACT ANCHORS (use sparingly, only when relevant):
+T-Mobile billing accounts, device identifiers, line state transitions, multi-tenant reseller hierarchies, audit-traceable state-mutating operations.
+
+OUTPUT FORMAT:
+Return ONLY the letter body. Start with "Dear [salutation]," and end with "Best,\\nSahil Mehta". No date, no contact-info header, no commentary outside the letter. The saveBundle step adds the header and date.`;
 
     let coverText = '';
     await streamText(coverPrompt, 900, (chunk) => {
       coverText += chunk;
       if (!aborted) send({ step: 'cover', type: 'chunk', text: chunk });
     });
-    send({ step: 'cover', status: 'done' });
+    // Hard guarantee: strip any em/en-dashes AND markdown emphasis markers the
+    // model slipped past the prompt ban. Re-send the cleaned text so the UI's
+    // final state and the saved bundle both use the clean version (the streamed
+    // chunks above may have shown a dash or asterisk mid-flight; this overwrites
+    // with the clean copy).
+    coverText = stripMarkdown(sanitizeDashes(coverText));
+    send({ step: 'cover', status: 'done', text: coverText });
 
     // ── STEP 4: Q&A ────────────────────────────────────────────────────────────
     if (aborted) { res.end(); return; }
@@ -609,6 +732,7 @@ RULES:
         resumeJson: tailoredJson,
         coverText,
         jdAnalysis: jdData,
+        jdText: job.desc,
         candidateName: RESUME_BASE_JSON.name,
       });
       send({
@@ -735,13 +859,15 @@ router.post('/cover-letter', async (req, res) => {
 
 CANDIDATE FACTS (use ONLY these — do not invent):
 - CS + Data Science UW-Madison 2025
-- Enidus SWE: Node.js BFF (OAuth/PoP), multi-tenant RBAC reporting, RAG chatbot (FastAPI/Qdrant/GPT-4o-mini)
+- Enidus AI/Full-Stack Engineer: Node.js BFF (OAuth/PoP), multi-tenant RBAC reporting, RAG chatbot (FastAPI/Qdrant/GPT-4o-mini)
 - RAG capstone: 73% accuracy, 40% latency reduction, 22K+ docs
 - Core skills: ${job.tags.join(', ')}
 JD: ${job.desc}
 TONE: ${tone}
 
 3 tight paragraphs. No filler openers ("excited to apply", "passionate about", etc.). Specific achievements with exact numbers. Direct close. Do not fabricate.
+ZERO em-dashes (—) or en-dashes (–) anywhere; they are an AI-writing tell and are strictly prohibited. Use commas, periods, colons, or semicolons instead.
+NO markdown: no **bold**, *italics*, or backticks. Plain text only (it renders literally otherwise).
 Return ONLY the letter body (no date/header).`;
 
   try {
@@ -750,7 +876,7 @@ Return ONLY the letter body (no date/header).`;
       max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
     });
-    res.json({ letter: msg.content[0].text });
+    res.json({ letter: stripMarkdown(sanitizeDashes(msg.content[0].text)) });
   } catch (e) {
     console.error('cover-letter error:', e.message);
     res.status(500).json({ error: e.message });
@@ -774,7 +900,7 @@ router.post('/qa', async (req, res) => {
   const qs = questions?.length ? questions : defaultQs;
 
   const prompt = `Answer these questions for Sahil Mehta applying to ${job.title} at ${job.company}.
-CANDIDATE FACTS (use ONLY these — do not invent): SWE at Enidus (Node.js BFF, OAuth, RBAC, RAG chatbot w/ 52 tests). RAG capstone (73% accuracy, 40% latency, 22K+ docs). Orahi (80% manual effort reduction). GSPANN (97% CNN accuracy). Skills: ${job.tags.join(', ')}.
+CANDIDATE FACTS (use ONLY these — do not invent): AI/Full-Stack Engineer at Enidus (Node.js BFF, OAuth, RBAC, RAG chatbot w/ 52 tests). RAG capstone (73% accuracy, 40% latency, 22K+ docs). Orahi (80% manual effort reduction). GSPANN (97% CNN accuracy). Skills: ${job.tags.join(', ')}.
 QUESTIONS:
 ${qs.map((q, i) => `${i + 1}. ${q}`).join('\n')}
 3-5 sentences each, first person, cite exact numbers. Do not fabricate claims. Return JSON array [{"q":"...","a":"..."}] only. No markdown fences.`;
@@ -807,7 +933,7 @@ router.post('/custom-question', async (req, res) => {
 
 QUESTION: ${question}
 
-CANDIDATE FACTS (use ONLY these — do not invent): CS + DS grad UW-Madison 2025. Full-time SWE at Enidus (Node.js BFF, OAuth/PoP, multi-tenant RBAC reporting, RAG AI chatbot with FastAPI/Qdrant, 52 pytest tests). RAG capstone (22K docs, 73% accuracy, 40% latency reduction). Core skills: Node.js, TypeScript, Python, PostgreSQL, AWS, PyTorch, Apache Spark.
+CANDIDATE FACTS (use ONLY these — do not invent): CS + DS grad UW-Madison 2025. Full-time AI/Full-Stack Engineer at Enidus (Node.js BFF, OAuth/PoP, multi-tenant RBAC reporting, RAG AI chatbot with FastAPI/Qdrant, 52 pytest tests). RAG capstone (22K docs, 73% accuracy, 40% latency reduction). Core skills: Node.js, TypeScript, Python, PostgreSQL, AWS, PyTorch, Apache Spark.
 
 3-5 sentences, first person, cite specific achievements with exact numbers from the facts above. Do not fabricate. Confident, human tone. Return ONLY the answer text.`;
 
@@ -890,7 +1016,7 @@ router.post('/bulk-qa', async (req, res) => {
 
 CANDIDATE FACTS — use ONLY these, never invent:
 - CS + Data Science double major, University of Wisconsin-Madison, May 2025
-- Software Developer at Enidus USA LLC (full-time, Jun 2025–present, NYC):
+- AI/Full-Stack Engineer at Enidus USA LLC (full-time, Jun 2025–present, NYC):
   • RAG AI Chatbot: FastAPI, GPT-4o-mini, Qdrant, 3-layer security (parameterized SQL + session scoping + RLS), 8 RBAC roles, 6-intent classifier, 9 audit tables, 52 pytest tests; React/TypeScript chat UI; Dockerized
   • Node.js BFF for T-Mobile carrier APIs: OAuth/PoP auth, secure header signing, Axios orchestration with retry/fallback
   • Multi-tenant reporting system: RBAC enforcement, parameterized queries, cron scheduling, CSRF/XSS protection

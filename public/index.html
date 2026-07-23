@@ -1287,6 +1287,8 @@ async function runPipeline() {
 
   markStep(2, 'active', 'Analyzing job description...');
 
+  S.pipelineComplete = false;
+
   const jobParam = encodeURIComponent(JSON.stringify(S.selected));
   const es = new EventSource('/api/ai/pipeline-stream?job=' + jobParam);
   S.currentES = es;
@@ -1303,15 +1305,20 @@ async function runPipeline() {
   es.onerror = () => {
     es.close();
     S.currentES = null;
-    if (S.running) {
-      S.running = false;
-      runBtn.disabled = false;
-      runBtn.textContent = 'Run Pipeline';
-      document.getElementById('pipe-error').style.display = 'flex';
-      document.getElementById('pipe-error').textContent = 'Pipeline error — check your API key and server console';
-      markStep(2, 'pending', 'Error');
-      setProgress(0, '');
+    if (!S.running) return;
+    S.running = false;
+    runBtn.disabled = false;
+    runBtn.textContent = 'Run Pipeline';
+    if (S.pipelineComplete) {
+      // Stream dropped after the bundle was generated and saved. Not an error.
+      // Leave the results and saved-folder banner in place.
+      return;
     }
+    const el = document.getElementById('pipe-error');
+    el.style.display = 'flex';
+    el.textContent = 'Pipeline stream closed before finishing. The API key may be invalid, or the connection dropped. Check the server console; any saved output is in JobApplications/.';
+    markStep(2, 'pending', 'Stream closed');
+    setProgress(0, '');
   };
 }
 
@@ -1403,6 +1410,12 @@ function handlePipelineEvent(data, es) {
       prev.scrollTop = prev.scrollHeight;
     }
     if (data.status === 'done') {
+      // Server sends the dash-sanitized text on done; prefer it over the
+      // raw streamed accumulation so the UI matches the saved bundle.
+      if (data.text) {
+        S.cl = data.text;
+        document.getElementById('pipe-cover-preview').textContent = S.cl;
+      }
       document.getElementById('cl-out').textContent = S.cl;
       document.getElementById('pipe-cover-preview').style.borderColor = '';
       document.getElementById('pipe-cover-status').textContent = 'done';
@@ -1432,6 +1445,7 @@ function handlePipelineEvent(data, es) {
   }
 
   if (data.step === 'complete') {
+    S.pipelineComplete = true;
     S.running = false;
     if (es) { es.close(); S.currentES = null; }
     runBtn.disabled = false;

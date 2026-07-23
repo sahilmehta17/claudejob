@@ -169,7 +169,7 @@ app.get('/api/health', (req, res) => {
 app.get('*', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\nJobFlow v2.2 running at http://localhost:${PORT}`);
   console.log(`Tracker: ${loadTracker().length} applications loaded`);
   if (!process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY.includes('your_')) {
@@ -184,6 +184,18 @@ app.listen(PORT, () => {
     console.log('JSearch API: connected (live job listings)');
   }
   console.log(`\nFeatures: Live job search | SSE streaming | Kanban tracker | Apply helper (manual)\n`);
+});
+
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`\nPort ${PORT} is already in use.`);
+    console.error(`Find the process with: lsof -nP -iTCP:${PORT} -sTCP:LISTEN`);
+    console.error('Stop it with: kill <PID>');
+    console.error(`Or start this app on another port: PORT=3001 node server.js\n`);
+    process.exit(1);
+  }
+
+  throw err;
 });
 
 module.exports = app;

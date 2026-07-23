@@ -118,21 +118,21 @@ test('rejects very short input', () => {
 });
 
 test('detects banned phrase: leveraged', () => {
-  const resume = RESUME_BASE.replace('Shipped an AI assistant', 'Leveraged end-to-end');
+  const resume = RESUME_BASE.replace('Shipped a multi-tenant conversational AI assistant', 'Leveraged end-to-end');
   const result = validateResumeOutput(resume);
   assert.ok(result.bannedFound.includes('leveraged'));
   assert.strictEqual(result.valid, false);
 });
 
 test('detects banned phrase: spearheaded', () => {
-  const resume = RESUME_BASE.replace('Shipped an AI assistant', 'Spearheaded end-to-end');
+  const resume = RESUME_BASE.replace('Shipped a multi-tenant conversational AI assistant', 'Spearheaded end-to-end');
   const result = validateResumeOutput(resume);
   assert.ok(result.bannedFound.includes('spearheaded'));
 });
 
 test('detects multiple banned phrases', () => {
   let resume = RESUME_BASE;
-  resume = resume.replace('Shipped an AI assistant', 'Leveraged cutting-edge');
+  resume = resume.replace('Shipped a multi-tenant conversational AI assistant', 'Leveraged cutting-edge');
   const result = validateResumeOutput(resume);
   assert.ok(result.bannedFound.length >= 2, `Expected >=2 banned, got: ${result.bannedFound}`);
 });
@@ -269,7 +269,7 @@ test('empty lines are skipped', () => {
 });
 
 test('diff with real resume has reasonable output', () => {
-  const modified = RESUME_BASE.replace('Shipped an AI assistant', 'Directed end-to-end');
+  const modified = RESUME_BASE.replace('Shipped a multi-tenant conversational AI assistant', 'Directed end-to-end');
   const diff = generateResumeDiff(RESUME_BASE, modified);
   const added = diff.filter(d => d.type === 'added');
   const removed = diff.filter(d => d.type === 'removed');

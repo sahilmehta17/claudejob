@@ -30,15 +30,23 @@ const R = {
   MARGIN_R: 17,
   MARGIN_T: 17,
   MARGIN_B: 20,
-  LINE_H: 13,
-  GAP_SECTION: 26,
-  GAP_NAME_CONTACT: 16,
+  LINE_H: 12,
+  // Extra inter-section gap added AFTER each separator rule (on top of the
+  // separator's own one-line advance). Tightened to 2pt on 2026-05-27: the
+  // larger 18pt value left a ~30pt void below each separator that read as
+  // "too much whitespace between sections." At 2pt the separator sits snug
+  // between the previous section's last bullet and the next section header.
+  // Page-fill is handled by adaptive leading (lineH) in renderResumePdf, NOT
+  // by inflating this gap — inflating section gaps is what made sections
+  // "float apart" and look weird. See the underfill block below.
+  GAP_SECTION: 2,
+  GAP_NAME_CONTACT: 14,
   // Post-item / subsection spacing — kept smaller than GAP_SECTION so the
-  // resume lands on a single page. Re-loosened from 4pt → 7pt now that the
-  // top summary line is gone (frees ~26pt of vertical budget). Layout still
-  // fits page 1 with comfortable breathing room.
-  GAP_POST_ITEM: 7,
-  GAP_SUBSECTION_PRE: 7,
+  // resume lands on a single page. Tightened from (13/26/7/7) to
+  // (12/18/5/5) on 2026-05-19 to make room for BASE content that grew
+  // past the previous render budget. Visually still has breathing room.
+  GAP_POST_ITEM: 5,
+  GAP_SUBSECTION_PRE: 5,
   FONT_NORMAL: 'Times-Roman',
   FONT_BOLD: 'Times-Bold',
   FONT_ITALIC: 'Times-Italic',
@@ -117,22 +125,23 @@ class ResumeWriter {
   constructor(outPath, opts = {}) {
     this.outPath = outPath;
     this.measureOnly = !!opts.measureOnly;
-    // gaps: per-render overrides for spacing constants. The underfill
-    // distribution pass measures with the defaults, then re-instantiates the
-    // writer with expanded values so an underfilled page LOOKS full without
-    // changing typography. `section` is the EXTRA inter-section gap added on
-    // top of the separator line; defaults to 0 to preserve baseline behavior.
+    // gaps: per-render overrides for spacing constants. `section` is the EXTRA
+    // inter-section gap added on top of the separator line; defaults to the
+    // tight R.GAP_SECTION (2pt) so EVERY render — including the default-spacing
+    // and base-content fallback tiers — uses the same tight section rhythm.
+    // The underfill adjuster NEVER inflates these gaps (doing so floats the
+    // sections apart); it only grows lineH. See renderResumePdf.
     this.gaps = Object.assign(
       {
-        section: 0,
+        section: R.GAP_SECTION,
         postItem: R.GAP_POST_ITEM,
         subsectionPre: R.GAP_SUBSECTION_PRE,
       },
       opts.gaps || {}
     );
-    // Per-render line height. Defaults to R.LINE_H so unaltered callers
-    // behave identically; the underfill adjuster bumps this by up to
-    // MAX_LINE_H_BUMP when gap expansion alone can't reach TARGET_FILL_PCT.
+    // Per-render line height (leading). Defaults to R.LINE_H. The underfill
+    // adjuster in renderResumePdf grows this — and ONLY this — by up to
+    // MAX_LINE_H_BUMP to fill an underfilled page, keeping section gaps tight.
     this.lineH = typeof opts.lineH === 'number' ? opts.lineH : R.LINE_H;
     // bufferPages: true keeps every page in _pageBuffer until doc.end() flushes
     // it. Without this, pdfkit flushes each page on addPage() and
@@ -295,6 +304,15 @@ class ResumeWriter {
     this.advance(this.lineH);
   }
 
+  // Role subline under a company-as-header job (Enidus). Italic so it reads as
+  // the position, distinct from the bold company header above and the bold
+  // subsection (project) names below. No pre-gap: sits snug under the company.
+  drawRole(text) {
+    this._checkBreak(this.lineH);
+    this._drawAt(R.CONTENT_X, this.y, text, R.FONT_ITALIC, R.BODY_SIZE);
+    this.advance(this.lineH);
+  }
+
   drawSubsection(text) {
     this._checkBreak(this.gaps.subsectionPre + this.lineH);
     this.advance(this.gaps.subsectionPre);
@@ -381,21 +399,25 @@ class ResumeWriter {
   finish() {
     // Hard guard: tailored resume MUST be 1 page. The LLM-side constraint in
     // ai.js asks for this but doesn't enforce it; this is the safety net.
+    //
+    // Defense-in-depth only — renderResumePdf below uses measure-first preflight
+    // so overflow is detected BEFORE the real write stream is opened. We do NOT
+    // touch the on-disk file here: fs.createWriteStream's open() is async via
+    // libuv, and racing stream.destroy() + unlinkSync against that open is the
+    // exact bug that produced 0-byte zombie PDFs (the deferred open lands AFTER
+    // unlinkSync returns ENOENT, creating an empty file the caller can't clean).
     const pageRange = this.doc.bufferedPageRange();
     if (pageRange.count > 1) {
-      this.doc.destroy?.();
-      this.stream.destroy();
-      try { fs.unlinkSync(this.outPath); } catch (_) {}
       throw new Error(
         `Resume overflow: tailored output rendered to ${pageRange.count} pages. ` +
-        `LLM-side layout constraint failed. Either retry tailoring with stricter ` +
-        `brevity guidance, or fall back to RESUME_BASE_JSON.`
+        `(This should have been caught by the measure-first preflight in ` +
+        `renderResumePdf; reaching this branch means a measure/render divergence.)`
       );
     }
-    // Always log the realized page-fill percentage so the two-pass underfill
-    // adjuster's result is visible. The < 70% branch keeps the original
-    // prompt-regression warning for cases the adjuster can't fully recover
-    // (e.g., MAX_GAP_MULTIPLIER caps the expansion).
+    // Always log the realized page-fill percentage so the adaptive-leading
+    // result is visible. The < 70% branch keeps the prompt-regression warning
+    // for cases leading can't fully recover (the MAX_LINE_H_BUMP cap is hit on
+    // genuinely sparse content — i.e. the LLM under-produced).
     const usable = R.PAGE_H - R.MARGIN_T - R.MARGIN_B;
     const used = this.y - R.MARGIN_T;
     const fillPct = used / usable;
@@ -422,69 +444,51 @@ class ResumeWriter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Underfill page distribution — two-pass render with line-height fallback.
+// Underfill page distribution — ADAPTIVE LEADING (v4).
 //
-// TARGET_FILL_PCT: aim for this fraction of usable page height. 0.95 matches
-// the BASE resume's natural density so tailored resumes don't look thinner.
+// Spec: docs/specs/2026-05-26-selective-underfill-distribution-design.md
 //
-// MAX_GAP_MULTIPLIER: cap on how much a single inter-section gap can grow
-// (relative to R.GAP_SECTION). 4.0 gives the gap-distribution path enough
-// runway on very sparse tailored resumes before LINE_H expansion kicks in.
+// History (read before changing constants — each prior approach was rejected
+// for a specific, documented reason; don't reintroduce them):
+//   v1: inflated GAP_SECTION + GAP_POST_ITEM + GAP_SUBSECTION_PRE + LINE_H to
+//       ~98% fill. Bullets/items looked puffy ("extra lines between points").
+//       USER-REJECTED.
+//   v2 (TARGET_FILL_PCT=0): all inflation off. Tight bullets, but ~25% bottom
+//       whitespace on under-budget tailored output. USER-REJECTED.
+//   v3: selective inflation of GAP_SECTION + LINE_H. The GAP_SECTION growth
+//       (up to 30pt) floated sections apart — "too much whitespace between
+//       sections, sits weird." USER-REJECTED.
+//   v4 (this code): section gaps are FIXED tight (R.GAP_SECTION = 2pt, never
+//       inflated). The ONLY dial used to fill an underfilled page is LINE_H
+//       (leading) — a uniform per-line stretch that fills the page without
+//       changing the relative rhythm between sections, items, or bullets.
+//       Empirically (see spec) leading ≈12.5–13.0pt fills a 1-page resume to
+//       97–99% across the realistic tailored char-count range, with a hard
+//       overflow cliff just above — so leading is grown in small steps with a
+//       measure-and-stop search rather than a single computed bump.
 //
-// MAX_LINE_H_BUMP: cap on the per-line height bump used as a fallback when
-// gap expansion alone can't reach TARGET_FILL_PCT. +2pt is the point beyond
-// which the typography reads as padded.
+// TARGET_FILL_PCT: stop growing leading once the page reaches this fill. 0.97
+//   leaves a small safety margin below the 1→2 page overflow cliff while still
+//   reading as a full page.
+// LINE_H_STEP: leading search granularity. 0.25pt is fine enough to land near
+//   the sweet spot without overshooting the cliff.
+// MAX_LINE_H_BUMP: hard cap on leading growth (LINE_H + 2.0 = 14pt max, ~17%).
+//   On genuinely sparse content the search hits this cap and the page keeps
+//   some bottom whitespace rather than stretching leading into "spaced-out"
+//   territory — graceful degradation. (Signal to watch: that means the LLM
+//   under-produced; fix the tailoring prompt, not the renderer.)
+// LINE_H_SAFETY_BUFFER: keep measured height this far below the usable area so
+//   baseline drift / kerning can't tip a "fits" measurement into a 2-page
+//   render.
+//
+// The 3-tier overflow fallback below remains load-bearing — do NOT touch it.
+// The realized-fill log + <70% warning at finish() still fires as the
+// LLM-content-drop signal.
 // ─────────────────────────────────────────────────────────────────────────────
-const TARGET_FILL_PCT = 0.98;
-const MAX_GAP_MULTIPLIER = 5.0;
+const TARGET_FILL_PCT = 0.97;
+const LINE_H_STEP = 0.25;
 const MAX_LINE_H_BUMP = 2.0;
-
-// Count the gap slots the underfill adjuster can grow: inter-section gaps
-// (sections.length - 1) + post-item gaps for experience/project items. Used
-// as the divisor for distributing the extra page-fill height per gap.
-function countResumeGaps(content) {
-  const sections = content.sections || [];
-  let n = sections.length > 0 ? sections.length - 1 : 0;
-  for (const s of sections) {
-    if (s.type === 'experience' || s.type === 'projects') {
-      n += (s.items || []).length;
-    }
-  }
-  return n;
-}
-
-// Approximate the total wrapped-line count for the line-height fallback. The
-// division by 80 is a deliberate rough estimate of wrapped lines per bullet —
-// exact precision doesn't matter because the divisor only sets extraPerLine,
-// and the cap (MAX_LINE_H_BUMP) plus the page-overflow guard absorb the rest.
-function countTotalLinesInContent(content) {
-  let n = 0;
-  if (content.name) n += 1;
-  if (content.contact && content.contact.length) n += 1;
-  if (content.summary) n += Math.ceil(String(content.summary).length / 80);
-  for (const s of content.sections || []) {
-    n += 1; // section header
-    if (s.type === 'education') {
-      for (const item of s.items || []) n += 2;
-    } else if (s.type === 'experience') {
-      for (const item of s.items || []) {
-        n += 1; // job header
-        for (const sub of item.subsections || []) {
-          if (sub.name) n += 1;
-          for (const b of sub.bullets || []) n += Math.ceil(String(b).length / 80);
-        }
-      }
-    } else if (s.type === 'projects') {
-      for (const item of s.items || []) {
-        n += 1; // job header
-        for (const b of item.bullets || []) n += Math.ceil(String(b).length / 80);
-      }
-    } else if (s.type === 'skills') {
-      n += (s.items || []).length;
-    }
-  }
-  return n;
-}
+const LINE_H_SAFETY_BUFFER = 6;
 
 // Render-or-measure path shared by both passes. Mutating writer.gaps before
 // calling this controls how much vertical space the layout consumes.
@@ -507,6 +511,7 @@ function drawResumeContent(w, content) {
     } else if (section.type === 'experience') {
       for (const item of section.items || []) {
         w.drawJobHeader(item.title, item.date, item.location);
+        if (item.role) w.drawRole(item.role);
         for (const sub of item.subsections || []) {
           if (sub.name) w.drawSubsection(sub.name);
           for (const b of sub.bullets || []) w.drawBullet(b);
@@ -540,114 +545,117 @@ function drawResumeContent(w, content) {
 // renderResumePdf(content, outPath) → Promise<outPath>
 // content schema = same as DEFAULT_CONTENT in generate_resume.py / RESUME_BASE_JSON
 //
-// Two-pass: measure with baseline gaps, then if the page is underfilled,
-// expand GAP_SECTION / GAP_POST_ITEM / GAP_SUBSECTION_PRE proportionally so
-// the rendered output fills TARGET_FILL_PCT of the page.
+// Section gaps stay FIXED tight (R.GAP_SECTION); if the page is underfilled,
+// fill it by growing leading (lineH) only, via a measure-and-stop search —
+// see the "ADAPTIVE LEADING (v4)" constants header block above for rationale.
 // ─────────────────────────────────────────────────────────────────────────────
 async function renderResumePdf(content, outPath) {
-  // Pass A: measure baseline content height with a discarded PDF.
-  const measurerA = new ResumeWriter(null, { measureOnly: true });
-  drawResumeContent(measurerA, content);
-  const usedHeight = measurerA.y - R.MARGIN_T;
-  try { measurerA.doc.end(); } catch (_) { /* noop sink */ }
-
   const pageContentHeight = R.PAGE_H - R.MARGIN_T - R.MARGIN_B;
   const targetHeight = TARGET_FILL_PCT * pageContentHeight;
+  const safeMax = pageContentHeight - LINE_H_SAFETY_BUFFER;
 
-  // Compute adjusted gaps if (and only if) Pass A came in short of target.
-  let gaps;
-  if (usedHeight < targetHeight) {
-    const extra = targetHeight - usedHeight;
-    const gapCount = countResumeGaps(content);
-    if (gapCount > 0) {
-      // Cap at (MAX_GAP_MULTIPLIER - 1) * R.GAP_SECTION so extra per slot
-      // can't exceed 3× R.GAP_SECTION (78pt). Beyond that the layout starts
-      // looking like blank-page padding even with section gaps doing the work.
-      const extraPerGap = Math.min(
-        extra / gapCount,
-        R.GAP_SECTION * (MAX_GAP_MULTIPLIER - 1)
-      );
-      gaps = {
-        section: extraPerGap,
-        postItem: R.GAP_POST_ITEM + extraPerGap * 0.7,
-        subsectionPre: R.GAP_SUBSECTION_PRE + extraPerGap * 0.6,
-      };
+  // Section gaps are FIXED tight (R.GAP_SECTION). The underfill adjuster never
+  // touches them — section-gap inflation is what made v3 "float apart." All
+  // page-filling is done by growing leading (lineH) only.
+  const gaps = {
+    section: R.GAP_SECTION,
+    postItem: R.GAP_POST_ITEM,
+    subsectionPre: R.GAP_SUBSECTION_PRE,
+  };
+
+  // Helper: measure used height + page count for a candidate leading.
+  const measure = (lineH) => {
+    const m = new ResumeWriter(null, { measureOnly: true, gaps, lineH });
+    drawResumeContent(m, content);
+    const used = m.y - R.MARGIN_T;
+    const pages = m.doc.bufferedPageRange().count;
+    try { m.doc.end(); } catch (_) { /* noop sink */ }
+    return { used, pages };
+  };
+
+  // Adaptive-leading search. Start at baseline; if the page is underfilled and
+  // fits on one page, grow leading in LINE_H_STEP increments until we either
+  // reach TARGET_FILL_PCT or the next step would spill to page 2 / cross the
+  // safety buffer. There's a hard 1→2-page cliff just above the sweet spot
+  // (see spec), so we step-and-measure rather than computing a single bump that
+  // could overshoot. `lineH` holds the largest leading verified to fit.
+  let lineH = R.LINE_H;
+  const baseline = measure(R.LINE_H);
+  if (baseline.pages === 1 && baseline.used < targetHeight) {
+    for (let lh = R.LINE_H + LINE_H_STEP; lh <= R.LINE_H + MAX_LINE_H_BUMP + 1e-9; lh += LINE_H_STEP) {
+      const { used, pages } = measure(lh);
+      if (pages > 1 || used > safeMax) break; // would overflow — keep last good leading
+      lineH = lh;                             // this leading fits
+      if (used >= targetHeight) break;        // reached target fill — stop growing
     }
   }
 
-  // Pass B: simulate height with the expanded gaps. If the gap-distribution
-  // weights still leave the page short of target (subsection weights add up
-  // to < 1.0× per-gap, so very sparse content can't reach 95% on gaps
-  // alone), bump LINE_H by up to MAX_LINE_H_BUMP to close the rest.
-  let lineH;
-  if (gaps) {
-    const measurerB = new ResumeWriter(null, { measureOnly: true, gaps });
-    drawResumeContent(measurerB, content);
-    const projectedHeight = measurerB.y - R.MARGIN_T;
-    try { measurerB.doc.end(); } catch (_) { /* noop sink */ }
-
-    if (projectedHeight < targetHeight) {
-      const stillNeeded = targetHeight - projectedHeight;
-      const lineCount = countTotalLinesInContent(content);
-      if (lineCount > 0) {
-        const extraPerLine = Math.min(MAX_LINE_H_BUMP, stillNeeded / lineCount);
-        if (extraPerLine > 0) lineH = R.LINE_H + extraPerLine;
-      }
-    }
-  }
-
-  // Pass B2: re-simulate with BOTH gaps AND the proposed lineH applied. Pass B
-  // measured lineH=13 but Pass C will use the bumped value, so a combined
-  // render can overflow page 1 even when Pass B looked safe. If the combined
-  // projection exceeds the usable page area (with a small safety buffer), back
-  // off the lineH bump to zero — accept slightly lower fill in exchange for a
-  // resume that actually renders.
-  if (gaps && lineH) {
-    const measurerB2 = new ResumeWriter(null, { measureOnly: true, gaps, lineH });
-    drawResumeContent(measurerB2, content);
-    const projectedHeight2 = measurerB2.y - R.MARGIN_T;
-    try { measurerB2.doc.end(); } catch (_) { /* noop sink */ }
-
-    const safeMax = pageContentHeight - 10; // 10pt buffer for kerning/baseline drift
-    if (projectedHeight2 > safeMax) {
-      lineH = undefined; // back off the lineH bump
-    }
-  }
-
-  // Pass C: real render with the (possibly expanded) gaps and lineH. Wrap in
-  // try/catch — if a content shape we didn't anticipate STILL overflows after
-  // Pass B2, retry with default spacing rather than leaving an empty PDF.
+  // Pass C: real render with the tight fixed gaps and the chosen leading.
+  //
   // Three-tier fallback: adjusted → default-spacing → RESUME_BASE_JSON.
-  // The base-content fallback ensures the user always gets a valid resume
-  // PDF even when the LLM tailoring produced too much content to fit.
+  // Each tier MEASURES FIRST (no file stream) and only opens the real write
+  // stream once the page-count guard passes. This kills two bugs at once:
+  //   (a) the fs.createWriteStream async-open race that left 0-byte zombie
+  //       PDFs when finish() tried to clean up via stream.destroy() + unlinkSync
+  //       before libuv's open() syscall had completed,
+  //   (b) the cascading-cleanup mess where 3 tiers each opened a stream then
+  //       tried to unlink, leaving the last race-winner on disk.
   //
   // Returns { path, fallback, fillPct } so callers (saveBundle → SSE → UI)
   // can surface which tier landed. fallback ∈ 'none' | 'default-spacing' |
   // 'base-content'. When non-'none' the UI MUST warn the user that the saved
   // PDF differs from the tailored output rendered above.
-  try {
-    const w = new ResumeWriter(outPath, { gaps, lineH });
-    drawResumeContent(w, content);
-    const r = await w.finish();
-    return { path: r.path, fallback: 'none', fillPct: r.fillPct };
-  } catch (e) {
-    if (!String(e.message).includes('Resume overflow')) throw e;
-    console.warn('[pdfRender] tailored render overflowed despite projection; retrying with default spacing');
-    try {
-      const w2 = new ResumeWriter(outPath, {});
-      drawResumeContent(w2, content);
-      const r2 = await w2.finish();
-      return { path: r2.path, fallback: 'default-spacing', fillPct: r2.fillPct };
-    } catch (e2) {
-      if (!String(e2.message).includes('Resume overflow')) throw e2;
-      console.warn('[pdfRender] tailored content too long for 1 page even at default spacing — falling back to RESUME_BASE_JSON. Tailoring discarded for this submission.');
+  const tiers = [
+    { content,           opts: { gaps, lineH }, label: 'tailored adjusted',         fallback: 'none' },
+    { content,           opts: {},              label: 'tailored default-spacing',  fallback: 'default-spacing' },
+    null, // base-content — content resolved lazily below to avoid require cycles
+  ];
+
+  for (let i = 0; i < tiers.length; i++) {
+    let tier = tiers[i];
+    if (!tier) {
       const { RESUME_BASE_JSON } = require('./resumeContent');
-      const w3 = new ResumeWriter(outPath, {});
-      drawResumeContent(w3, RESUME_BASE_JSON);
-      const r3 = await w3.finish();
-      return { path: r3.path, fallback: 'base-content', fillPct: r3.fillPct };
+      tier = { content: RESUME_BASE_JSON, opts: {}, label: 'base-content', fallback: 'base-content' };
     }
+
+    // Measure-only pass: build the PDF in memory, count pages, discard.
+    // No file stream involved → no race condition, no zombie file.
+    const measurer = new ResumeWriter(null, { measureOnly: true, ...tier.opts });
+    drawResumeContent(measurer, tier.content);
+    const measuredPages = measurer.doc.bufferedPageRange().count;
+    try { measurer.doc.end(); } catch (_) { /* discard noop sink */ }
+
+    if (measuredPages > 1) {
+      const tag = tier.label;
+      if (i < tiers.length - 1) {
+        console.warn(`[pdfRender] ${tag} measures ${measuredPages} pages — falling through to next tier`);
+        continue;
+      }
+      // Final tier (base-content) also overflows — content-level bug, not a
+      // render bug. Throw a clear actionable error rather than emitting an
+      // empty file. saveBundle.js surfaces this to the UI via the SSE
+      // 'save' status:'error' event so the user knows submission is blocked.
+      throw new Error(
+        `Resume overflow: all 3 render tiers produced >1 page even at base-content fallback ` +
+        `(measured ${measuredPages} pages). RESUME_BASE_JSON has grown beyond 1 page — ` +
+        `trim bullets in resumeContent.js until base measures 1 page.`
+      );
+    }
+
+    // Measure passed — render for real. Only NOW do we open the file stream,
+    // which means destroy/unlink races are impossible: if we got here, the
+    // render will complete and finish() will resolve cleanly.
+    const w = new ResumeWriter(outPath, tier.opts);
+    drawResumeContent(w, tier.content);
+    const r = await w.finish();
+    if (i > 0) {
+      console.warn(`[pdfRender] rendered via fallback tier: ${tier.label}`);
+    }
+    return { path: r.path, fallback: tier.fallback, fillPct: r.fillPct };
   }
+
+  // Unreachable — the loop above either returns or throws.
+  throw new Error('renderResumePdf: tier loop exited without returning (unreachable)');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

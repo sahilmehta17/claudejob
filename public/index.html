@@ -1409,7 +1409,27 @@ function handlePipelineEvent(data, es) {
       prev.textContent += data.text;
       prev.scrollTop = prev.scrollHeight;
     }
+    if (data.status === 'blocked') {
+      // Fabrication guard blocked the letter after one regeneration. Surface it
+      // clearly; the flagged letter was NOT saved.
+      const prev = document.getElementById('pipe-cover-preview');
+      const msg = 'Cover letter blocked by the fabrication guard: ' +
+        (data.message || 'failed source-fact validation') +
+        '. It was not saved. Regenerate or edit it manually before sending.';
+      prev.style.borderColor = '#c0392b';
+      prev.textContent = msg;
+      document.getElementById('cl-out').textContent = msg;
+      document.getElementById('pipe-cover-status').textContent = 'blocked';
+      markStep(4, 'warn', 'Cover letter blocked (fabrication guard)');
+      setProgress(80, 'Cover letter blocked');
+    }
     if (data.status === 'done') {
+      if (data.blocked) {
+        // Block already surfaced above; keep the warning state, do not turn green.
+        document.getElementById('pipe-cover-status').textContent = 'blocked';
+        setProgress(80, 'Cover letter blocked');
+        return;
+      }
       // Server sends the dash-sanitized text on done; prefer it over the
       // raw streamed accumulation so the UI matches the saved bundle.
       if (data.text) {

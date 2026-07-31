@@ -398,6 +398,388 @@ test('ADJACENCY_MAP keys are all lowercase', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Bullet-keyword validator (JD keywords into bullets, truth-bounded)
+// validateTailoredBullets / enforceBulletKeywords / capRewordedBullets
+// ─────────────────────────────────────────────────────────────────────────────
+const {
+  validateTailoredBullets,
+  enforceBulletKeywords,
+  capRewordedBullets,
+  ENABLE_BULLET_KEYWORDS,
+  MAX_TAILORED_BULLETS,
+  lockSkillsSection,
+  validateCoverLetter,
+  enforceCoverLetter,
+  enforceBulletLength,
+} = require('../routes/ai');
+const { CANDIDATE_FACTS } = require('../routes/resumeContent');
+const { SYNONYM_MAP, FACT_FRAGMENT_MAP } = require('../routes/resumeContent');
+const { BASE_BULLET_CHAR_BUDGET } = require('../routes/resumeContent');
+
+const clone = (j) => JSON.parse(JSON.stringify(j));
+// Canonical bullet paths inside RESUME_BASE_JSON (experience section index 0).
+const COPILOT = (t) => t.sections[0].items[0].subsections[0].bullets; // AI Copilot
+const REPORTS = (t) => t.sections[0].items[0].subsections[1].bullets; // Reports
+const ORAHI   = (t) => t.sections[0].items[1].subsections[0].bullets; // Orahi
+const JD_KW = { title: 'AI Engineer', company: 'Acme', tags: ['REST APIs', 'semantic search', 'RBAC', 'FastAPI'], desc: 'Build RAG systems.' };
+
+console.log('\nbullet-keyword validator:');
+
+// Async test wrapper (existing `test` is sync). Collects a promise to await.
+const asyncTests = [];
+function atest(name, fn) { asyncTests.push({ name, fn }); }
+
+// Regression guard: the candidate's own true material must never be flagged.
+atest('validateTailoredBullets: base resume produces zero flags', async () => {
+  const res = await validateTailoredBullets(clone(RESUME_BASE_JSON), RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  assert.strictEqual(res.flags.length, 0, 'unexpected flags: ' + JSON.stringify(res.flags));
+});
+
+// Check 1: capability/keyword injection.
+atest('validateTailoredBullets: flags injected tools not in facts (Go, Rust)', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = 'Shipped a Go microservice with Rust extensions for the reseller copilot.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  const terms = res.flags.filter(f => f.check === 'injection').map(f => f.term);
+  assert.ok(terms.includes('go'), 'expected Go flagged, got: ' + JSON.stringify(terms));
+  assert.ok(terms.includes('rust'), 'expected Rust flagged, got: ' + JSON.stringify(terms));
+});
+
+atest('validateTailoredBullets: does NOT flag a tool already on the base resume (Kubernetes)', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = 'Deployed the reseller copilot on Kubernetes with per-tenant Qdrant isolation.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  const terms = res.flags.filter(f => f.check === 'injection').map(f => f.term);
+  assert.ok(!terms.includes('kubernetes'), 'Kubernetes is on the base resume; must not flag');
+});
+
+// Check 1: synonym (conditional allow).
+atest('validateTailoredBullets: synonym allowed when mapped base term present', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[1] = 'Designed a hybrid retrieval layer over Qdrant vector search with BM25, exposed as semantic search for the catalog.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  assert.ok(!res.flags.some(f => f.term === 'semantic search'),
+    'semantic search should be allowed alongside vector search: ' + JSON.stringify(res.flags));
+});
+
+atest('validateTailoredBullets: synonym flagged when mapped base term absent', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[1] = 'Built a semantic search feature for the reseller catalog.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  assert.ok(res.flags.some(f => f.term === 'semantic search' && f.check === 'injection'),
+    'semantic search without vector search should flag: ' + JSON.stringify(res.flags));
+});
+
+// Check 1: approved fact fragment, topic-scoped.
+atest('validateTailoredBullets: fact fragment allowed on its mapped topic', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[3] = 'Migrated session state to a durable SQL-backed flow state machine with optimistic concurrency control via state_version, preserving 9 transaction flows.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  assert.ok(!res.flags.some(f => String(f.term).includes('optimistic concurrency')),
+    'fragment on its own topic should be allowed: ' + JSON.stringify(res.flags));
+});
+
+atest('validateTailoredBullets: fact fragment flagged on the wrong topic', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  ORAHI(t)[0] = 'Designed a bus route algorithm with optimistic concurrency control, reducing manual student-assignment effort by 80%.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  assert.ok(res.flags.some(f => String(f.term).includes('optimistic concurrency')),
+    'copilot-only fragment on the Orahi bullet should flag: ' + JSON.stringify(res.flags));
+});
+
+// Check 2: directional inversion (injected LLM-judge).
+atest('validateTailoredBullets: inversion judge FAIL flags a reversed directional claim', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[1] = 'Led a routing inversion from vector-first to lexical-first when the product pivoted consumer-facing.';
+  const judge = async (bullet) => ({ verdict: /vector-first to lexical-first/.test(bullet) ? 'FAIL' : 'PASS', reason: 'direction reversed' });
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { judge });
+  assert.ok(res.flags.some(f => f.check === 'inversion'), 'expected inversion flag: ' + JSON.stringify(res.flags));
+});
+
+atest('validateTailoredBullets: inversion judge PASS does not flag', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  const judge = async () => ({ verdict: 'PASS', reason: 'ok' });
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { judge });
+  assert.ok(!res.flags.some(f => f.check === 'inversion'), 'PASS verdict must not flag');
+});
+
+// Check 3: cross-project metric contamination.
+atest('validateTailoredBullets: flags 40% latency metric moved onto a copilot bullet', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[1] = 'Designed a hybrid retrieval layer that delivered a 40% query-latency reduction for the copilot.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  assert.ok(res.flags.some(f => f.check === 'contamination'),
+    'expected contamination flag for 40% latency on copilot: ' + JSON.stringify(res.flags));
+});
+
+// Enforcement: regenerate once, then fall back to base.
+atest('enforceBulletKeywords: a flagged bullet regenerated clean is kept', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = 'Shipped a Go service for the reseller copilot.';
+  const regenerate = async () => 'Shipped a multi-tenant conversational AI assistant for the reseller platform in pilot with 15 tenants.';
+  const out = await enforceBulletKeywords(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
+  const b = COPILOT(out.json)[0];
+  assert.ok(!/\bGo\b/.test(b), 'injected term should be gone after regeneration');
+  assert.ok(out.resolutions.some(r => r.resolution === 'regenerated'), 'expected a regenerated resolution');
+});
+
+atest('enforceBulletKeywords: second failure falls back to the base bullet', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  const baseBullet0 = RESUME_BASE_JSON.sections[0].items[0].subsections[0].bullets[0];
+  COPILOT(t)[0] = 'Shipped a Go service for the reseller copilot.';
+  const regenerate = async () => 'Rebuilt it in Go and Rust for the copilot.'; // still injected
+  const out = await enforceBulletKeywords(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
+  const b = COPILOT(out.json)[0];
+  assert.strictEqual(b, baseBullet0, 'should fall back to the untouched base bullet');
+  assert.ok(out.resolutions.some(r => r.resolution === 'fallback-base'), 'expected a fallback-base resolution');
+});
+
+// Config cap: never reword more than MAX_TAILORED_BULLETS.
+atest('capRewordedBullets: never rewords more than the cap', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = 'Reworded bullet A about the assistant for resellers and enterprise customers.';
+  COPILOT(t)[1] = 'Reworded bullet B about hybrid retrieval and ranking across the catalog.';
+  REPORTS(t)[0] = 'Reworded bullet C about the self-serve analytics product for customers.';
+  ORAHI(t)[0]   = 'Reworded bullet D about the dynamic bus route clustering work.';
+  const out = capRewordedBullets(t, RESUME_BASE_JSON, 2);
+  assert.strictEqual(out.reworded, 2, 'reworded count should equal the cap');
+  assert.strictEqual(out.reverted, 2, 'two excess bullets should revert to base');
+});
+
+// Config surface.
+test('config: ENABLE_BULLET_KEYWORDS defaults on, MAX_TAILORED_BULLETS positive', () => {
+  assert.strictEqual(ENABLE_BULLET_KEYWORDS, true);
+  assert.ok(MAX_TAILORED_BULLETS > 0, 'MAX_TAILORED_BULLETS should be a positive number');
+});
+
+test('SYNONYM_MAP and FACT_FRAGMENT_MAP keys are lowercase', () => {
+  for (const k of Object.keys(SYNONYM_MAP)) assert.strictEqual(k, k.toLowerCase(), `SYNONYM_MAP key "${k}"`);
+  for (const k of Object.keys(FACT_FRAGMENT_MAP)) assert.strictEqual(k, k.toLowerCase(), `FACT_FRAGMENT_MAP key "${k}"`);
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix 3: shared checks module (DRY guard). Bullet behavior is covered unchanged
+// by all the bullet tests above; this just locks in the shared exports.
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\nshared checks module (Fix 3):');
+
+test('checks module exports the three reusable checks', () => {
+  const checks = require('../routes/checks');
+  assert.strictEqual(typeof checks.checkCapabilityInjection, 'function');
+  assert.strictEqual(typeof checks.checkMetricContamination, 'function');
+  assert.strictEqual(typeof checks.checkDirectionalInversion, 'function');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix 1: deterministic skills lock
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\nskills lock (Fix 1):');
+
+test('lockSkillsSection: discards LLM skills (C++), keeps 4 base labels, adds adjacency skills', () => {
+  const t = clone(RESUME_BASE_JSON);
+  // Simulate an LLM that rewrote the skills section and injected C++.
+  const sIdx = t.sections.findIndex(s => s.type === 'skills');
+  t.sections[sIdx] = {
+    type: 'skills', header: 'TECHNICAL SKILLS',
+    items: [{ label: 'Made Up Category', value: 'C++, Rust, Haskell' }],
+  };
+  const out = lockSkillsSection(t, RESUME_BASE_JSON, ['Pinecone']);
+  const skills = out.json.sections.find(s => s.type === 'skills');
+  const joined = skills.items.map(i => `${i.label}: ${i.value}`).join(' | ');
+  assert.ok(!/C\+\+/.test(joined), 'C++ must not survive the lock: ' + joined);
+  assert.ok(/Pinecone/.test(joined), 'adjacency-justified Pinecone should appear: ' + joined);
+  assert.deepStrictEqual(
+    skills.items.map(i => i.label),
+    ['AI / LLM Systems', 'Languages', 'Frameworks', 'Infra & Tools'],
+    'the 4 base category labels must be preserved'
+  );
+});
+
+test('lockSkillsSection: does not mutate the module-level base skills', () => {
+  const before = JSON.stringify(RESUME_BASE_JSON.sections.find(s => s.type === 'skills'));
+  const t = clone(RESUME_BASE_JSON);
+  lockSkillsSection(t, RESUME_BASE_JSON, ['Pinecone']);
+  const after = JSON.stringify(RESUME_BASE_JSON.sections.find(s => s.type === 'skills'));
+  assert.strictEqual(before, after, 'base skills section must be untouched');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix 2: cover-letter validator + enforcement
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\ncover-letter validator (Fix 2):');
+const CLEAN_LETTER = 'Dear team, I build production AI systems in Python and TypeScript with FastAPI and Qdrant. Best,\nSahil Mehta';
+
+atest('validateCoverLetter: flags a letter naming C++ (capability injection)', async () => {
+  const letter = 'Dear team, I build production AI systems in Python, TypeScript, and C++. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW);
+  assert.ok(res.flags.some(f => f.check === 'injection' && f.term === 'c++'),
+    'expected C++ injection flag: ' + JSON.stringify(res.flags));
+});
+
+atest('validateCoverLetter: a clean letter passes capability injection', async () => {
+  const res = await validateCoverLetter(CLEAN_LETTER, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW);
+  assert.ok(!res.flags.some(f => f.check === 'injection'),
+    'clean letter should not flag injection: ' + JSON.stringify(res.flags));
+});
+
+atest('validateCoverLetter: flags a reversed routing story (inversion judge)', async () => {
+  const letter = 'Dear team, I inverted routing from vector-first to lexical-first as we scaled. Best,\nSahil Mehta';
+  const judge = async () => ({ verdict: 'FAIL', reason: 'reversed lexical/vector-first' });
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW, { judge });
+  assert.ok(res.flags.some(f => f.check === 'inversion'), 'expected inversion flag: ' + JSON.stringify(res.flags));
+});
+
+atest('validateCoverLetter: flags an invented incident (incident judge)', async () => {
+  const letter = 'Dear team, last month I discovered a critical gap in a banking client system. Best,\nSahil Mehta';
+  const incidentJudge = async () => ({ verdict: 'FAIL', reason: 'invented incident: last-month gap' });
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW, { incidentJudge });
+  assert.ok(res.flags.some(f => f.check === 'invented-incident'),
+    'expected invented-incident flag: ' + JSON.stringify(res.flags));
+});
+
+atest('validateCoverLetter: flags capstone 40% latency attributed to the copilot', async () => {
+  const letter = 'Dear team, on the T-Mobile copilot I delivered a 40% latency reduction for users. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW);
+  assert.ok(res.flags.some(f => f.check === 'contamination'),
+    'expected contamination flag: ' + JSON.stringify(res.flags));
+});
+
+atest('enforceCoverLetter: a clean letter is not blocked and not regenerated', async () => {
+  let regenCalled = false;
+  const regenerate = async () => { regenCalled = true; return CLEAN_LETTER; };
+  const out = await enforceCoverLetter(CLEAN_LETTER, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW, { regenerate });
+  assert.strictEqual(out.blocked, false);
+  assert.strictEqual(regenCalled, false, 'a clean letter must not trigger regeneration');
+});
+
+atest('enforceCoverLetter: a regenerated clean letter is accepted', async () => {
+  const bad = 'Dear team, I build systems in C++ every day. Best,\nSahil Mehta';
+  const regenerate = async () => CLEAN_LETTER;
+  const out = await enforceCoverLetter(bad, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW, { regenerate });
+  assert.strictEqual(out.blocked, false);
+  assert.strictEqual(out.resolution, 'regenerated');
+  assert.strictEqual(out.text, CLEAN_LETTER);
+});
+
+atest('enforceCoverLetter: regenerates once then BLOCKS a persistently flagged letter', async () => {
+  const bad = 'Dear team, I build systems in C++ every day. Best,\nSahil Mehta';
+  const regenerate = async () => 'Dear team, I still rely on C++ heavily. Best,\nSahil Mehta'; // still flagged
+  const out = await enforceCoverLetter(bad, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW, { regenerate });
+  assert.strictEqual(out.blocked, true, 'a persistently flagged letter must block');
+  assert.strictEqual(out.resolution, 'blocked');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fix 4: number-format normalization in validateResumeOutput
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\nnumber normalization (Fix 4):');
+
+test('validateResumeOutput: "0%" output does not false-flag when base writes "0 percent"', () => {
+  // The base CloudGuard bullet writes "0 percent"; a tailored output may render
+  // it as "0%". That must not be flagged as a number not in source.
+  const text = RESUME_BASE.replace(/0 percent/g, '0%');
+  const res = validateResumeOutput(text);
+  assert.ok(
+    !res.warnings.some(w => /Contains numbers not in source/.test(w) && /\b0%/.test(w)),
+    'unexpected 0% fabrication warning: ' + res.warnings.join(' | ')
+  );
+});
+
+test('validateResumeOutput: still flags a genuinely new percentage', () => {
+  const text = RESUME_BASE + '\nImproved throughput by 63% overnight';
+  const res = validateResumeOutput(text);
+  assert.ok(res.warnings.some(w => /Contains numbers not in source/.test(w) && /63%/.test(w)),
+    'a genuinely new number should still flag: ' + res.warnings.join(' | '));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-07-30 brief: keep the tailored resume on one page (length-fit)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\nskills growth cap (Fix 2):');
+
+test('lockSkillsSection: reports skillsGrowth for an added skill', () => {
+  const t = clone(RESUME_BASE_JSON);
+  const out = lockSkillsSection(t, RESUME_BASE_JSON, ['Pinecone']);
+  assert.strictEqual(out.skillsGrowth, ', Pinecone'.length, 'growth is the appended chars');
+});
+
+test('lockSkillsSection: caps skills growth to roughly one line', () => {
+  // Many adjacency-justified skills; the section must not grow past ~1 line.
+  const many = ['Pinecone', 'Weaviate', 'Milvus', 'Chroma', 'pgvector', 'Podman', 'LangChain', 'LangGraph', 'LlamaIndex'];
+  const t = clone(RESUME_BASE_JSON);
+  const out = lockSkillsSection(t, RESUME_BASE_JSON, many);
+  assert.ok(out.skillsGrowth > 0 && out.skillsGrowth <= 90,
+    'growth should be capped near one line, got: ' + out.skillsGrowth);
+  assert.ok(out.added.length < many.length, 'some additions were capped');
+});
+
+console.log('\nlength-fit enforcement (Fix 1):');
+const COPILOT_B0 = RESUME_BASE_JSON.sections[0].items[0].subsections[0].bullets[0];
+
+atest('enforceBulletLength: shortens an over-length bullet and keeps total <= budget', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = COPILOT_B0 + ('  padding words'.repeat(30)); // well over base
+  const regenerate = async () => 'Shipped the reseller copilot to pilot users.';
+  const out = await enforceBulletLength(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
+  assert.ok(out.totalChars <= BASE_BULLET_CHAR_BUDGET, 'total must be within the one-page budget');
+  assert.ok(COPILOT(out.json)[0].length <= COPILOT_B0.length, 'bullet 0 must be at or below its base length');
+  assert.ok(out.resolutions.some(r => r.index === 0 && r.resolution === 'shortened'), JSON.stringify(out.resolutions));
+});
+
+atest('enforceBulletLength: a shortening that injects a tool is rejected and reverted to base', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = COPILOT_B0 + ('  padding words'.repeat(30));
+  const regenerate = async () => 'Rebuilt the copilot in Go for raw speed.'; // short but injects Go
+  const out = await enforceBulletLength(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
+  assert.strictEqual(COPILOT(out.json)[0], COPILOT_B0, 'must revert to base when the shortening fabricates');
+  assert.ok(out.resolutions.some(r => r.index === 0 && r.resolution === 'reverted-base'), JSON.stringify(out.resolutions));
+});
+
+atest('enforceBulletLength: a resume already within budget is left unchanged', async () => {
+  const t = clone(RESUME_BASE_JSON); // identical to base
+  let regenCalled = false;
+  const regenerate = async () => { regenCalled = true; return 'x'; };
+  const out = await enforceBulletLength(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
+  assert.strictEqual(regenCalled, false, 'no bullet over tolerance should trigger regeneration');
+  assert.strictEqual(out.resolutions.length, 0, 'no reverts or shortenings expected');
+  assert.strictEqual(JSON.stringify(out.json.sections), JSON.stringify(RESUME_BASE_JSON.sections),
+    'sections must be byte-identical to base');
+});
+
+atest('enforceBulletLength: reverting one over-length bullet leaves the others untouched', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  const baseB1 = RESUME_BASE_JSON.sections[0].items[0].subsections[0].bullets[1];
+  COPILOT(t)[0] = COPILOT_B0 + ('  padding words'.repeat(40)); // over; shortening will fail
+  const tweaked = baseB1.replace('Designed', 'Built'); // within tolerance (shorter), stays tailored
+  COPILOT(t)[1] = tweaked;
+  const regenerate = async () => null; // shortening fails -> revert bullet 0 only
+  const out = await enforceBulletLength(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
+  assert.strictEqual(COPILOT(out.json)[0], COPILOT_B0, 'bullet 0 reverts to base');
+  assert.strictEqual(COPILOT(out.json)[1], tweaked, 'bullet 1 (within tolerance) stays tailored');
+});
+
+atest('enforceBulletLength: guarantees total <= budget even when every shortening fails', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = COPILOT(t)[0] + ('  padding'.repeat(40));
+  COPILOT(t)[1] = COPILOT(t)[1] + ('  padding'.repeat(40));
+  REPORTS(t)[0] = REPORTS(t)[0] + ('  padding'.repeat(40));
+  const regenerate = async () => null; // all shortenings fail -> all revert to base
+  const out = await enforceBulletLength(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
+  assert.ok(out.totalChars <= BASE_BULLET_CHAR_BUDGET, 'total must be within the one-page budget');
+});
+
+atest('enforceBulletLength: skills growth reserves budget and keeps the combined total in envelope', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = COPILOT_B0 + ('  padding words'.repeat(40));
+  const regenerate = async () => 'Shipped the reseller copilot to pilot users with zero incidents.';
+  const skillsGrowth = 40;
+  const out = await enforceBulletLength(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate, skillsGrowth });
+  assert.strictEqual(out.budget, BASE_BULLET_CHAR_BUDGET - skillsGrowth, 'budget is reduced by skills growth');
+  assert.ok(out.totalChars <= out.budget, 'bullets fit the reserved budget');
+  assert.ok(out.totalChars + skillsGrowth <= BASE_BULLET_CHAR_BUDGET, 'combined total stays in the one-page envelope');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // saveBundle: folder name + slug helpers (no actual disk I/O in tests)
 // ─────────────────────────────────────────────────────────────────────────────
 const { slug, buildFolderName } = require('../routes/saveBundle');
@@ -422,16 +804,40 @@ test('buildFolderName combines company, title, timestamp', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Summary
+// Run async tests (bullet-keyword validator), then print the summary.
+// The async cases are registered via atest() into `asyncTests` above; they run
+// after all synchronous tests so the counters stay shared and accurate.
 // ─────────────────────────────────────────────────────────────────────────────
-console.log(`\n${'─'.repeat(60)}`);
-console.log(`Results: ${passed} passed, ${failed} failed`);
-if (failures.length) {
-  console.log('\nFailed tests:');
-  for (const f of failures) {
-    console.log(`  ✗ ${f.name}: ${f.error}`);
+async function runAsyncTests() {
+  for (const { name, fn } of asyncTests) {
+    try {
+      await fn();
+      passed++;
+      console.log(`  ✓ ${name}`);
+    } catch (e) {
+      failed++;
+      failures.push({ name, error: e.message });
+      console.log(`  ✗ ${name}`);
+      console.log(`    ${e.message}`);
+    }
   }
 }
-console.log('');
 
-process.exit(failed > 0 ? 1 : 0);
+(async () => {
+  await runAsyncTests();
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Summary
+  // ───────────────────────────────────────────────────────────────────────────
+  console.log(`\n${'─'.repeat(60)}`);
+  console.log(`Results: ${passed} passed, ${failed} failed`);
+  if (failures.length) {
+    console.log('\nFailed tests:');
+    for (const f of failures) {
+      console.log(`  ✗ ${f.name}: ${f.error}`);
+    }
+  }
+  console.log('');
+
+  process.exit(failed > 0 ? 1 : 0);
+})();

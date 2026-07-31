@@ -187,10 +187,10 @@ const RESUME_BASE_JSON = {
       type: 'skills',
       header: 'TECHNICAL SKILLS',
       items: [
-        { label: 'AI / LLM Systems', value: 'LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, vector search (Qdrant), prompt engineering, eval frameworks, structured outputs (Pydantic), streaming/SSE, sentence-transformers, lifecycle marketing, PyTorch, TensorFlow' },
+        { label: 'AI / LLM Systems', value: 'LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, vector search (Qdrant), prompt engineering, eval frameworks, structured outputs (Pydantic), streaming/SSE, sentence-transformers, PyTorch, TensorFlow' },
         { label: 'Languages', value: 'Python, JavaScript/TypeScript, Java, C, SQL, Kotlin, Swift, R. Cert: SnowPro Associate & Core (2024).' },
         { label: 'Frameworks', value: 'FastAPI, Node.js, Express, React, Next.js, Angular, Flask, Django, React Native' },
-        { label: 'Infra & Tools', value: 'PostgreSQL, REST, gRPC, AWS S3, GCP, Docker, Kubernetes, Git, Claude Code, Claude Code Skills, MCP, Braze, JWT/OAuth, RBAC' },
+        { label: 'Infra & Tools', value: 'PostgreSQL, REST, gRPC, AWS S3, GCP, Docker, Kubernetes, Git, Claude Code, Claude Code Skills, MCP, JWT/OAuth, RBAC' },
       ],
     },
   ],
@@ -430,6 +430,59 @@ function applyAdjacency(jsonResume, jdRequiredSkills) {
   return { json: next, added };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SYNONYM_MAP: JD term to the base term(s) it may legitimately replace.
+//
+// Feeds two consumers: (a) the tailoring prompt, as a hint that these JD
+// phrasings are permitted, and (b) the bullet validator's allowlist. The rule
+// the validator enforces is deliberately conditional: a synonym may surface in
+// a bullet ONLY when that bullet already contains one of its mapped base terms.
+// That keeps "semantic search" from appearing on a bullet that never did vector
+// search, while still letting the resume speak the JD's vocabulary where the
+// underlying work is genuinely the same.
+//
+// Curate conservatively, same rule of thumb as ADJACENCY_MAP: only pairs where
+// the JD term and the base term describe the SAME work, not merely adjacent
+// work. Keys and values are lowercased; matching is case-insensitive.
+// ─────────────────────────────────────────────────────────────────────────────
+const SYNONYM_MAP = {
+  'rest apis':               ['apis', 'api', 'rest'],
+  'restful':                 ['apis', 'api', 'rest'],
+  'restful apis':            ['apis', 'api', 'rest'],
+  'semantic search':         ['vector search', 'embedding'],
+  'vector database':         ['qdrant', 'vector search'],
+  'vector db':               ['qdrant', 'vector search'],
+  'hybrid search':           ['hybrid retrieval'],
+  'reciprocal rank fusion':  ['rrf'],
+  'function calling':        ['function-calling', 'tool calling'],
+  'tool use':                ['tool calling', 'function-calling'],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FACT_FRAGMENT_MAP: JD keyword to an approved TRUE fragment plus the bullet
+// topic(s) it may attach to. Every fragment must be true and traceable to
+// CANDIDATE_FACTS. The topic keys match the project classifier in the validator
+// (copilot, reports, bff, orahi, gspann, capstone, cloudguard, claudejob), so a
+// fragment can only be surfaced on the bullet that actually earned it.
+//
+// Feeds the prompt as a hint and the validator allowlist as a topic-scoped
+// allowed term (stricter than a global allowlist entry: right phrase, right
+// bullet, or it flags). Ship small; grow only with facts to back each entry.
+// ─────────────────────────────────────────────────────────────────────────────
+const FACT_FRAGMENT_MAP = {
+  // Facts: "PostgreSQL with row-level security"; base copilot safety bullet
+  // already carries "row-level security at execution".
+  'row-level security':      { fragment: 'row-level security', topics: ['copilot'] },
+  'rls':                     { fragment: 'row-level security', topics: ['copilot'] },
+  // Facts: "optimistic locking via state_version" on the SQL-backed flow state
+  // machine. Optimistic concurrency control is the standard name for that.
+  'optimistic concurrency':  { fragment: 'optimistic concurrency control via state_version', topics: ['copilot'] },
+  'optimistic concurrency control': { fragment: 'optimistic concurrency control via state_version', topics: ['copilot'] },
+  // Facts + base: "per-tenant Qdrant isolation" / "Qdrant per-tenant collections".
+  'multi-tenant isolation':  { fragment: 'per-tenant Qdrant isolation', topics: ['copilot'] },
+  'tenant isolation':        { fragment: 'per-tenant Qdrant isolation', topics: ['copilot'] },
+};
+
 /**
  * Sum character count of all bullet text across experience + projects sections.
  * Used by the resume tailoring prompt as the hard upper bound for tailored
@@ -469,4 +522,6 @@ module.exports = {
   extractUserSkills,
   sumBulletChars,
   BASE_BULLET_CHAR_BUDGET,
+  SYNONYM_MAP,
+  FACT_FRAGMENT_MAP,
 };

@@ -10,6 +10,7 @@ const {
   TECH_VOCAB,
   METRIC_OWNERSHIP,
   normText,
+  normWord,
   collectBullets,
   groupBaseBullets,
   buildBulletAllowlist,
@@ -289,7 +290,13 @@ function safeParseJSON(raw) {
   if (!raw || typeof raw !== 'string') {
     return { data: null, error: 'Empty or non-string response from model' };
   }
-  const cleaned = raw.trim().replace(/^```(?:json)?\s*/gm, '').replace(/```\s*$/gm, '').trim();
+  // Prefer the content of the first fenced code block when one is present.
+  // Models told "Return ONLY JSON" sometimes still append an explanatory note
+  // after the closing fence; stripping just the ``` markers (old behavior)
+  // leaves that trailing prose glued to the JSON and breaks JSON.parse. The
+  // fenced block itself is reliably the answer, so extract only that.
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const cleaned = (fenced ? fenced[1] : raw).trim();
   try {
     return { data: JSON.parse(cleaned), error: null };
   } catch (e) {
@@ -512,6 +519,18 @@ ${bulletText}`;
  */
 async function validateCoverLetter(coverText, candidateFacts, baseJson, jd, opts = {}) {
   const allowSet = buildBulletAllowlist(baseJson, candidateFacts);
+  // The cover-letter prompt requires opening with the target company's name
+  // and often echoes the job title back ("mirror the company's own
+  // language"). Those words are not the candidate claiming a capability, so
+  // they must not be checked against CANDIDATE_FACTS the way a technology
+  // claim would be.
+  for (const field of [jd && jd.company, jd && jd.title]) {
+    if (!field) continue;
+    for (const w of String(field).split(/\s+/)) {
+      const n = normWord(w);
+      if (n) allowSet.add(n);
+    }
+  }
   const flags = [];
 
   // Check 1: capability injection (deterministic). project=null means the global
@@ -583,7 +602,8 @@ async function enforceCoverLetter(coverText, candidateFacts, baseJson, jd, opts 
 async function defaultCoverInversionJudge(coverText, candidateFacts) {
   const prompt = `You are checking a COVER LETTER for DIRECTIONAL accuracy against the candidate's true facts.
 Return ONLY JSON: {"verdict":"PASS"|"FAIL","reason":"short reason"}.
-FAIL only if the letter reverses the direction of a described decision, architecture, or migration versus the facts (for example, tells the lexical-first to vector-first routing story backwards, or reverses which system replaced which). Do not FAIL for wording or emphasis.
+FAIL only if the letter explicitly states or clearly implies the WRONG order for a described decision, architecture, or migration versus the facts (for example, says the routing went vector-first-to-lexical-first when the facts say lexical-first-to-vector-first, or names the wrong system as the one that got replaced).
+Do NOT FAIL for wording or emphasis. Do NOT FAIL just because the letter describes only the current/final state of a system without narrating what came before it, or uses an analogy/example from a different part of the work — an omitted "before" state is incompleteness, not a reversal. Only FAIL when a direction is actually asserted and it is backwards.
 
 CANDIDATE FACTS:
 ${candidateFacts}
@@ -592,7 +612,7 @@ COVER LETTER:
 ${coverText}`;
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 200,
+    max_tokens: 350,
     messages: [{ role: 'user', content: prompt }],
   });
   const parsed = safeParseJSON(msg.content[0].text);
@@ -603,9 +623,21 @@ ${coverText}`;
 // Default invented-incident judge. Flags specific incidents/events/claims that
 // do not trace to CANDIDATE_FACTS. Safe on parse failure.
 async function defaultCoverIncidentJudge(coverText, candidateFacts) {
-  const prompt = `You are fact-checking a COVER LETTER against the candidate's ONLY true facts.
-Return ONLY JSON: {"verdict":"PASS"|"FAIL","reason":"short reason naming the invented detail"}.
-FAIL if the letter states any specific incident, event, dated anecdote, named customer, or quantified claim that does NOT trace to the CANDIDATE FACTS below (for example "last month I discovered a gap", a specific bug or outage, or a number not present in the facts). General motivation, opinions, and correctly-sourced facts are fine. When unsure whether a concrete claim is supported, FAIL.
+  const prompt = `You are fact-checking a COVER LETTER, but ONLY the parts of it that describe the CANDIDATE's own experience. You are not fact-checking anything else in the letter.
+
+SCOPE — read this before anything else:
+- IN SCOPE: any specific incident, event, dated anecdote, named customer, or quantified claim the letter attributes to the CANDIDATE (what they personally did, decided, built, or experienced).
+- OUT OF SCOPE, always PASS regardless of whether it appears in CANDIDATE FACTS: (a) the salutation — who the letter is addressed to, and what company it names, (b) any fact about the TARGET COMPANY itself (its size, scale, product, mission, industry) that isn't a claim about the candidate. You cannot verify these against CANDIDATE FACTS and are not being asked to — do not treat "not in CANDIDATE FACTS" as suspicious for these two categories, and do not flag the letter as a possible template/mismatch on that basis.
+
+Worked example: "Dear Chen, PlayStation reaches over 100 million people, and that scale is why I'm applying. At Enidus I built an AI copilot with zero hallucination incidents across 15 tenants." → PASS. "Chen" and "PlayStation" are salutation (out of scope). "100 million people" is a target-company fact (out of scope). "zero hallucination incidents across 15 tenants" traces to CANDIDATE FACTS. Nothing here is an invented claim about the candidate.
+
+Return ONLY JSON: {"verdict":"PASS"|"FAIL","reason":"short reason naming the invented detail, or empty string if PASS"}.
+
+FAIL only for the IN SCOPE category: a specific incident, event, dated anecdote, named customer, or quantified claim about the CANDIDATE that does NOT trace to CANDIDATE FACTS below (for example "last month I discovered a gap", a specific bug or outage, or a number not present in the facts).
+
+Do NOT FAIL merely because a true, general fact from CANDIDATE FACTS is narrated with reflective or storytelling language (e.g. calling a real architectural decision "the moment that shaped my thinking," or describing a real tradeoff as if walking through the reasoning live). That framing is a legitimate writing style, not fabrication. Only FAIL that kind of passage if it also adds a specific invented detail on top of the true fact — a fake date, a named person or customer not in the facts, or a number not in the facts.
+
+General motivation and opinions are fine. When unsure whether an IN SCOPE claim about the candidate is supported, FAIL; never apply that same doubt to the two OUT OF SCOPE categories above.
 
 CANDIDATE FACTS:
 ${candidateFacts}
@@ -614,7 +646,7 @@ COVER LETTER:
 ${coverText}`;
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5-20251001',
-    max_tokens: 200,
+    max_tokens: 350,
     messages: [{ role: 'user', content: prompt }],
   });
   const parsed = safeParseJSON(msg.content[0].text);
@@ -1314,7 +1346,8 @@ Return ONLY the letter body. Start with "Dear [salutation]," and end with "Best,
     let coverBlocked = false;
     try {
       const enforcedCover = await enforceCoverLetter(
-        coverText, CANDIDATE_FACTS, RESUME_BASE_JSON, jdData || { tags: job.tags },
+        coverText, CANDIDATE_FACTS, RESUME_BASE_JSON,
+        { ...(jdData || {}), tags: job.tags, company: job.company, title: job.title },
         { judge: defaultCoverInversionJudge, incidentJudge: defaultCoverIncidentJudge, regenerate: defaultCoverRegenerate }
       );
       for (const w of enforcedCover.warnings) console.warn('[ai.cover-guard] ' + w);

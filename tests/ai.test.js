@@ -59,6 +59,19 @@ test('returns error for invalid JSON', () => {
   assert.ok(error.includes('JSON parse failed'));
 });
 
+// Regression: an LLM judge told "Return ONLY JSON" sometimes still appends an
+// explanatory note after the closing fence (observed live from the cover-letter
+// incident/inversion judges). The old fence-stripping only removed the ``` ```
+// markers themselves and left the trailing prose glued to the JSON, breaking
+// JSON.parse — which silently downgraded a real judge verdict to the "parse
+// failed" PASS fallback, i.e. a fabricated claim could slip through undetected.
+test('parses fenced JSON even with explanatory prose after the closing fence', () => {
+  const raw = '```json\n{"verdict": "PASS", "reason": ""}\n```\n\nAll claims trace cleanly to CANDIDATE FACTS, so this passes.';
+  const { data, error } = safeParseJSON(raw);
+  assert.strictEqual(error, null, 'trailing prose after the fence must not break parsing: ' + error);
+  assert.deepStrictEqual(data, { verdict: 'PASS', reason: '' });
+});
+
 test('returns error for null input', () => {
   const { data, error } = safeParseJSON(null);
   assert.strictEqual(data, null);
@@ -667,6 +680,53 @@ atest('enforceCoverLetter: regenerates once then BLOCKS a persistently flagged l
   const out = await enforceCoverLetter(bad, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW, { regenerate });
   assert.strictEqual(out.blocked, true, 'a persistently flagged letter must block');
   assert.strictEqual(out.resolution, 'blocked');
+});
+
+// Regression coverage for the false-positive block pattern found across recent
+// live applications (AXQ Capital "axq", ERP Suites "erp", Nuro "ml" from the
+// job title, Aquatic "go", Exelixis "rails"): the target company name / job
+// title and a handful of TECH_VOCAB entries that double as ordinary English
+// words must not read as fabricated candidate capability claims.
+atest('validateCoverLetter: does not flag the target company name as an injected term (AXQ Capital)', async () => {
+  const jd = { title: 'Quantitative Developer', company: 'AXQ Capital', tags: [], desc: '' };
+  const letter = 'Dear AXQ Capital hiring team, I build production AI systems in Python and TypeScript. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, jd);
+  assert.ok(!res.flags.some(f => f.term === 'axq'),
+    'company name "AXQ" must not be flagged as an unsupported technical term: ' + JSON.stringify(res.flags));
+});
+
+atest('validateCoverLetter: does not flag a job-title acronym as an injected term (ML Data Infra)', async () => {
+  const jd = { title: 'Software Engineer, ML Data Infra', company: 'Nuro', tags: [], desc: '' };
+  const letter = 'Dear Nuro hiring team, I want to bring my ML Data Infra experience to this role. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, jd);
+  assert.ok(!res.flags.some(f => f.term === 'ml'),
+    'job-title term "ML" must not be flagged as an unsupported technical term: ' + JSON.stringify(res.flags));
+});
+
+atest('validateCoverLetter: does not flag ordinary English usage of "go" and "rails"', async () => {
+  const letter = 'Dear team, I want to go deep on evals rather than chase every framework off the rails. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW);
+  const terms = res.flags.filter(f => f.check === 'injection').map(f => f.term);
+  assert.ok(!terms.includes('go') && !terms.includes('rails'),
+    'ordinary prose use of "go"/"rails" must not be flagged as tech claims: ' + JSON.stringify(terms));
+});
+
+atest('validateCoverLetter: a genuine fabricated claim using an ambiguous word is still allowed through this check (documented tradeoff) but real tech terms still flag', async () => {
+  const letter = 'Dear team, I ship production systems in C++ and Elixir. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW);
+  const terms = res.flags.filter(f => f.check === 'injection').map(f => f.term);
+  assert.ok(terms.includes('c++') && terms.includes('elixir'),
+    'unambiguous fabricated tech terms must still flag: ' + JSON.stringify(terms));
+});
+
+// FACT_FRAGMENT_MAP entries are true, topic-scoped facts; the topic restricts
+// which BULLET they may render on, but that placement constraint should not
+// apply to free prose, where there is no bullet to misattribute the fact to.
+atest('validateCoverLetter: does not flag a true fact-fragment term (multi-tenant isolation) in prose', async () => {
+  const letter = 'Dear team, my work on the copilot centered on multi-tenant isolation for reseller accounts. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW);
+  assert.ok(!res.flags.some(f => f.term === 'multi-tenant isolation'),
+    'true fact-fragment term must not flag in cover-letter prose: ' + JSON.stringify(res.flags));
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

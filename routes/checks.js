@@ -204,15 +204,34 @@ function extractTechTerms(text) {
   return [...found];
 }
 
+// PROSE_AMBIGUOUS_TERMS: TECH_VOCAB entries that double as ordinary English
+// words (verbs/nouns a cover letter is likely to use with zero technical
+// intent: "go deep", "off the rails", "spark my interest", "at the helm",
+// "digital nomad", "look forward to spring"). None of these are on the
+// candidate's real stack, so exempting them costs no real detection value;
+// left un-exempted they reliably false-positive on ordinary prose. Bullet
+// validation (project != null) is untouched — bullets are terse/technical
+// and don't carry this ambiguity the same way.
+const PROSE_AMBIGUOUS_TERMS = new Set(['go', 'rails', 'spring', 'spark', 'helm', 'nomad']);
+
 // Is a candidate term traceable? Global allowlist wins; else a synonym is
 // allowed only when the text ALSO carries one of its mapped base terms; else a
-// fact fragment is allowed only on one of its mapped topics (`project`).
+// fact fragment is allowed on its mapped topic (`project`) — or, in prose mode
+// (project === null, i.e. cover letters), unconditionally, since `topics`
+// only restricts which BULLET a fragment may render on and prose has no
+// bullet to misattribute it to; the fragment itself is always a true,
+// candidate-fact-backed claim by construction. Ambiguous common-English terms
+// are also exempted in prose mode only.
 function isTermCovered(term, text, project, allowSet) {
   if (allowSet.has(term)) return true;
+  if (project === null && PROSE_AMBIGUOUS_TERMS.has(term)) return true;
   const syn = SYNONYM_MAP && SYNONYM_MAP[term];
   if (syn && syn.some(base => containsTerm(text, base))) return true;
   const frag = FACT_FRAGMENT_MAP && FACT_FRAGMENT_MAP[term];
-  if (frag && Array.isArray(frag.topics) && frag.topics.includes(project)) return true;
+  if (frag) {
+    if (project === null) return true;
+    if (Array.isArray(frag.topics) && frag.topics.includes(project)) return true;
+  }
   return false;
 }
 
@@ -310,6 +329,7 @@ async function checkDirectionalInversion(text, opts = {}) {
 
 module.exports = {
   TECH_VOCAB,
+  PROSE_AMBIGUOUS_TERMS,
   METRIC_OWNERSHIP,
   PROJECT_KEYWORDS,
   escapeRegex,

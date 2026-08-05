@@ -424,6 +424,7 @@ const {
   validateCoverLetter,
   enforceCoverLetter,
   enforceBulletLength,
+  needsNarrativeRewrite,
 } = require('../routes/ai');
 const { CANDIDATE_FACTS } = require('../routes/resumeContent');
 const { SYNONYM_MAP, FACT_FRAGMENT_MAP } = require('../routes/resumeContent');
@@ -672,6 +673,40 @@ atest('enforceCoverLetter: a regenerated clean letter is accepted', async () => 
   assert.strictEqual(out.blocked, false);
   assert.strictEqual(out.resolution, 'regenerated');
   assert.strictEqual(out.text, CLEAN_LETTER);
+});
+
+// Regression for the Astrana block (2026-08-04). The letter invented a "before"
+// state ("I was routing based on embedding similarity alone") that contradicts
+// the facts, where the BEFORE state is lexical-first. Regeneration was told to
+// "fix ONLY these issues, keeping every correctly-sourced detail", so it patched
+// the correct direction phrase in while preserving the wrong narrative around
+// it. Verified 8/8 deterministically: the resulting self-contradictory letter
+// fails the inversion judge again and blocks. A narrative-premise flag must
+// escalate to a full paragraph rewrite instead of a surgical patch.
+test('needsNarrativeRewrite: inversion and invented-incident escalate; word-level flags do not', () => {
+  assert.strictEqual(needsNarrativeRewrite([{ check: 'inversion' }]), true);
+  assert.strictEqual(needsNarrativeRewrite([{ check: 'invented-incident' }]), true);
+  assert.strictEqual(needsNarrativeRewrite([{ check: 'injection' }]), false);
+  assert.strictEqual(needsNarrativeRewrite([{ check: 'contamination' }]), false);
+  assert.strictEqual(needsNarrativeRewrite([{ check: 'injection' }, { check: 'inversion' }]), true,
+    'a mixed flag set containing a narrative flag must escalate');
+});
+
+test('needsNarrativeRewrite: tolerates empty, null, and malformed flag lists', () => {
+  assert.strictEqual(needsNarrativeRewrite([]), false);
+  assert.strictEqual(needsNarrativeRewrite(null), false);
+  assert.strictEqual(needsNarrativeRewrite(undefined), false);
+  assert.strictEqual(needsNarrativeRewrite([null, {}, { check: undefined }]), false);
+});
+
+atest('enforceCoverLetter: passes the flag objects to regenerate so it can escalate', async () => {
+  const bad = 'Dear team, I build systems in C++ every day. Best,\nSahil Mehta';
+  let seenFlags = null;
+  const regenerate = async (text, reasons, facts, jd, flags) => { seenFlags = flags; return CLEAN_LETTER; };
+  await enforceCoverLetter(bad, CANDIDATE_FACTS, RESUME_BASE_JSON, JD_KW, { regenerate });
+  assert.ok(Array.isArray(seenFlags), 'regenerate must receive the flag objects, not just reason strings');
+  assert.ok(seenFlags.some(f => f.check === 'injection'),
+    'flag objects must carry their check type: ' + JSON.stringify(seenFlags));
 });
 
 atest('enforceCoverLetter: regenerates once then BLOCKS a persistently flagged letter', async () => {

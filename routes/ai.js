@@ -562,6 +562,24 @@ async function validateCoverLetter(coverText, candidateFacts, baseJson, jd, opts
   return { flags };
 }
 
+// Flags whose root cause is the letter's NARRATIVE PREMISE rather than a single
+// swappable word. A surgical "fix only the named issue" rewrite cannot repair
+// these: told to keep every correctly-sourced detail, the regenerator patches
+// the corrected phrase in and leaves the contradicting story around it, so the
+// letter fails the same check again and blocks (the Astrana case: the letter
+// invented an embedding-only "before" state when the facts say the before state
+// was lexical-first). These must escalate to a full rewrite of the affected
+// paragraph, premise included.
+const NARRATIVE_CHECKS = new Set(['inversion', 'invented-incident']);
+
+/**
+ * needsNarrativeRewrite(flags) — true when any flag is narrative-level and the
+ * regeneration must discard the original story rather than patch it.
+ */
+function needsNarrativeRewrite(flags) {
+  return Array.isArray(flags) && flags.some(f => f && NARRATIVE_CHECKS.has(f.check));
+}
+
 /**
  * enforceCoverLetter(coverText, candidateFacts, baseJson, jd, opts)
  * Validate, regenerate once (opts.regenerate) if flagged, re-validate; if still
@@ -581,7 +599,7 @@ async function enforceCoverLetter(coverText, candidateFacts, baseJson, jd, opts 
   if (typeof opts.regenerate === 'function') {
     let regen;
     try {
-      regen = await opts.regenerate(coverText, reasons1, candidateFacts, jd);
+      regen = await opts.regenerate(coverText, reasons1, candidateFacts, jd, v1.flags);
     } catch (e) {
       console.warn('[ai.cover-guard] regenerate threw (non-fatal):', e.message);
     }
@@ -654,9 +672,20 @@ ${coverText}`;
   return parsed.data;
 }
 
-// Default cover-letter regenerator: rewrite fixing only the named violations.
-async function defaultCoverRegenerate(coverText, reasons, candidateFacts, jd) {
-  const prompt = `The cover letter below failed a fabrication check. Rewrite it to fix ONLY these issues, keeping the same structure, voice, and every correctly-sourced detail:
+// Default cover-letter regenerator. Word-level flags get a surgical fix; a
+// narrative-level flag (see NARRATIVE_CHECKS) escalates to rewriting the whole
+// affected paragraph, because patching a corrected phrase into a story built on
+// a wrong premise just produces a letter that contradicts itself.
+async function defaultCoverRegenerate(coverText, reasons, candidateFacts, jd, flags) {
+  const scope = needsNarrativeRewrite(flags)
+    ? `At least one issue below is with the STORY ITSELF, not a single word. Do NOT patch the named phrase into the existing narrative. REWRITE the affected paragraph from scratch, directly from the CANDIDATE FACTS, and discard whatever premise the original paragraph was built on. If the original invented a "before" state, a turning point, or a sequence of events, drop it entirely and re-derive the story from the facts. Keep the letter's voice, its opening paragraph, and its closing, but treat the flagged paragraph's content as unusable.
+
+A letter that keeps the original wrong premise and simply inserts the corrected phrase will FAIL again. The two must not coexist.
+
+Issues:`
+    : `Rewrite it to fix ONLY these issues, keeping the same structure, voice, and every correctly-sourced detail:`;
+
+  const prompt = `The cover letter below failed a fabrication check. ${scope}
 ${reasons.map(r => '- ' + r).join('\n')}
 
 Hard rules: name no technology, framework, tool, metric, or number that is not in the CANDIDATE FACTS below. Invent no incident, event, or anecdote. Do not reverse the direction of any decision, architecture, or migration. No em-dashes or en-dashes. Plain text, first person, start with "Dear" and end with "Best," then the name on the next line. Return ONLY the letter body.
@@ -1793,3 +1822,4 @@ module.exports.validateCoverLetter = validateCoverLetter;
 module.exports.enforceCoverLetter = enforceCoverLetter;
 // Length-fit enforcement (2026-07-30 brief).
 module.exports.enforceBulletLength = enforceBulletLength;
+module.exports.needsNarrativeRewrite = needsNarrativeRewrite;

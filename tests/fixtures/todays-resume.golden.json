@@ -1,0 +1,141 @@
+{
+  "name": "Sahil Mehta",
+  "contact": [
+    "New York City, NY · Open to relocation",
+    "sahilmehta0204@gmail.com",
+    "608-960-5508",
+    {
+      "text": "Portfolio",
+      "url": "https://sahilmehta.dev"
+    },
+    {
+      "text": "Github",
+      "url": "https://github.com/sahilmehta17"
+    },
+    {
+      "text": "Linkedin",
+      "url": "https://www.linkedin.com/in/sahil-mehta-87357b1b9/"
+    }
+  ],
+  "summary": "",
+  "sections": [
+    {
+      "type": "skills",
+      "header": "TECHNICAL SKILLS",
+      "items": [
+        {
+          "label": "AI / LLM Systems",
+          "value": "LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, vector search (Qdrant), eval frameworks, structured outputs (Pydantic), sentence-transformers, PyTorch"
+        },
+        {
+          "label": "Languages",
+          "value": "Python, JavaScript/TypeScript, Java, C, SQL, R. Cert: SnowPro Associate & Core (2024)."
+        },
+        {
+          "label": "Frameworks",
+          "value": "FastAPI, Node.js, Express, React, Next.js, Flask, Django"
+        },
+        {
+          "label": "Infra & Tools",
+          "value": "PostgreSQL, gRPC, AWS S3, Docker, Git, Claude Code, MCP, JWT/OAuth, RBAC"
+        }
+      ]
+    },
+    {
+      "type": "experience",
+      "header": "PROFESSIONAL EXPERIENCE",
+      "items": [
+        {
+          "title": "Enidus USA LLC. (Full-Time)",
+          "role": "AI/Full-Stack Engineer",
+          "date": "June 2025 - Present",
+          "location": "Hicksville, NY",
+          "subsections": [
+            {
+              "name": "AI Chatbot & Agentic Copilot for T-Mobile for Business",
+              "bullets": [
+                "Shipped a multi-tenant conversational AI assistant for a T-Mobile IoT reseller platform (FastAPI, Anthropic Claude / OpenAI function-calling, Qdrant, PostgreSQL on Azure); 9 LLM-orchestrated workflows collapse 10-12 portal clicks per reseller action into a single natural-language command. In pilot with 15 tenants, 25+ customers, 100+ users.",
+                "Designed a hybrid retrieval layer combining Qdrant vector search with BM25 keyword retrieval via Reciprocal Rank Fusion (k=60) and regex fast-paths for identifier inputs; led a vector-first routing inversion when the product pivoted consumer-facing, moving intent top-1 accuracy from 73.5% to 89.0% on a 442-query eval corpus.",
+                "Built defense-in-depth safety at the LLM boundary: 43 Pydantic-typed tool handlers with RBAC-filtered catalogs the model never sees in full, parameterized SQL templates with row-level security at execution, per-tenant Qdrant isolation, and user-confirmed writes; zero hallucination incidents in pilot.",
+                "Migrated in-memory session state to a durable SQL-backed flow state machine (optimistic locking, automatic session expiration), preserving 9 multi-step transaction flows across deploys and worker scaling."
+              ]
+            },
+            {
+              "name": "Custom Reports & Dashboards Platform",
+              "bullets": [
+                "Owned a self-serve full-stack analytics product end-to-end alone (React, Node.js + Express, SQL Server with stored procedures) letting enterprise customers compose reports, custom dashboards, and charts over their own data; cut analytics turnaround from days to minutes.",
+                "Hardened against multi-tenant attack classes via stored-procedure CRUD contracts, two-layer filter validation, runtime tenant-clause injection, JWT auth, per-session CSRF rotation, strict CSP, and AES-256-CBC encryption."
+              ]
+            },
+            {
+              "name": "Carrier API Gateway (BFF)",
+              "bullets": [
+                "Built a TypeScript BFF (Node.js + Express) as the sole integration layer to T-Mobile's carrier APIs, with per-request RS256 Proof-of-Possession token generation over OAuth 2.0 and a translation layer mapping legacy portal formats to the new PIL API contract."
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Software Developer, Orahi (Internship)",
+          "date": "July 2024 - August 2024",
+          "location": "Remote",
+          "subsections": [
+            {
+              "name": "",
+              "bullets": [
+                "Designed a dynamic bus route adjustment algorithm using K-means clustering, reducing manual student-assignment effort by 80%; optimized Flask REST APIs for telemetry ingestion."
+              ]
+            }
+          ]
+        },
+        {
+          "title": "Data Scientist, GSPANN Technologies Inc. (Internship)",
+          "date": "June 2023 - August 2023",
+          "location": "Remote",
+          "subsections": [
+            {
+              "name": "",
+              "bullets": [
+                "Built a CNN-based pneumonia detection model on chest X-ray images; iterated on preprocessing and data augmentation to improve generalization."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "projects",
+      "header": "PROJECTS",
+      "items": [
+        {
+          "title": "CloudGuard - Reliability & Safety Harness for LLM Cloud Agents",
+          "date": "July 2026 | Personal Project",
+          "url": "https://github.com/sahilmehta17/cloudguard",
+          "bullets": [
+            "Built a test-driven eval and safety harness (Python, FastAPI, MCP, sentence-transformers) for LLM agents operating cloud infrastructure against a real AWS mock (Moto); 57 tests, all headline numbers written to committed JSON artifacts.",
+            "Showed a bag-of-words tool-router degrades tool-selection to 0.83 while an embeddings router recovers it to 1.00 (Sonnet and Haiku); added blast-radius guardrails (1.00 precision and recall) and an indirect prompt-injection red-team cutting the hijack-attempt rate to 0 percent."
+          ]
+        },
+        {
+          "title": "ClaudeJob - Agentic Resume Tailoring Pipeline",
+          "date": "April 2026 - Present | Personal Project",
+          "url": "https://github.com/sahilmehta17/claudejob",
+          "bullets": [
+            "Built an end-to-end agentic pipeline (Node.js + Anthropic SDK + SSE streaming) that ingests live job postings, tailors a structured-output JSON resume per role, and generates pixel-matching PDFs via pdfkit; actively used to power my own AI Engineer applications.",
+            "Engineered a validator suite mirroring LLM-content failure modes: 30+ banned AI-resume cliché regex, source-fact validation against a pinned base to catch fabricated stats, and a jargon-lead heuristic. Deterministic adjacency-skill injection (curated, never LLM-fabricated); 47 passing unit tests."
+          ]
+        }
+      ]
+    },
+    {
+      "type": "education",
+      "header": "EDUCATION",
+      "items": [
+        {
+          "institution": "University of Wisconsin, Madison",
+          "degree": "B.S. in Computer Science | B.S. in Data Science (double major)"
+        }
+      ]
+    }
+  ]
+}

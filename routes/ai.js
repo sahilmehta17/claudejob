@@ -1,7 +1,7 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const router = express.Router();
-const { RESUME_BASE_JSON, CANDIDATE_FACTS, renderResumeText, applyAdjacency, sumBulletChars, BASE_BULLET_CHAR_BUDGET, SYNONYM_MAP, FACT_FRAGMENT_MAP } = require('./resumeContent');
+const { RESUME_BASE_JSON, CANDIDATE_FACTS, renderResumeText, applyAdjacency, sumBulletChars, BASE_BULLET_CHAR_BUDGET, SYNONYM_MAP, FACT_FRAGMENT_MAP, enforceSectionOrder, ENTRY_POOL, selectEntries, enforceProjectDateOrder } = require('./resumeContent');
 const { saveApplicationBundle } = require('./saveBundle');
 const { runChecks: runBundleChecks } = require('../scripts/validate');
 // Shared fabrication checks (Fix 3), consumed by the bullet validator and the
@@ -89,9 +89,19 @@ const SOURCE_FACTS = {
 
 /**
  * Validate resume output against guardrails.
+ * opts.requiredCompanies: the companies that MUST appear on THIS resume. Since
+ * entries are now chosen by the deterministic selector, a benched company (e.g.
+ * GSPANN on a non-ML JD) is legitimately absent and must not be flagged. Callers
+ * that know the selection pass the selected companies; default is the full
+ * SOURCE_FACTS list (back-compat for callers/tests that validate the full base).
  * Returns { valid: boolean, warnings: string[], bannedFound: string[] }
  */
-function validateResumeOutput(resumeText) {
+function validateResumeOutput(resumeText, opts = {}) {
+  // Default to the companies present in the DEFAULT resume (benched entries like
+  // GSPANN are legitimately absent). The SSE route overrides this with the exact
+  // per-JD selected set so an ML JD that DOES select GSPANN still requires it.
+  const requiredCompanies = opts.requiredCompanies
+    || SOURCE_FACTS.companies.filter(c => RESUME_BASE.includes(c));
   const warnings = [];
   const bannedFound = [];
 
@@ -153,10 +163,10 @@ function validateResumeOutput(resumeText) {
     warnings.push(`Contains numbers not in source resume: ${[...new Set(suspiciousNumbers)].join(', ')} — verify these`);
   }
 
-  // Check company names are preserved
-  const companiesPresent = SOURCE_FACTS.companies.filter(c => resumeText.includes(c));
-  if (companiesPresent.length < SOURCE_FACTS.companies.length) {
-    const missing = SOURCE_FACTS.companies.filter(c => !resumeText.includes(c));
+  // Check company names are preserved (only those the selector actually placed on
+  // this resume — a benched company is expected to be absent, not a fabrication).
+  const missing = requiredCompanies.filter(c => !resumeText.includes(c));
+  if (missing.length > 0) {
     warnings.push(`Missing companies from source: ${missing.join(', ')}`);
   }
 
@@ -892,12 +902,18 @@ ${bulletText}`;
 // ─────────────────────────────────────────────────────────────────────────────
 // HARDENED RESUME PROMPT — conservative, source-grounded, anti-fabrication
 // ─────────────────────────────────────────────────────────────────────────────
-function buildResumePrompt(job, emphasis) {
+function buildResumePrompt(job, emphasis, baseJson = RESUME_BASE_JSON) {
+  // `baseJson` is the per-JD source resume produced by the deterministic entry
+  // selector (selectEntries): which entries appear is decided in code before the
+  // LLM sees anything, so tailoring can reword the selected entries but can never
+  // add or swap entries itself. Defaults to RESUME_BASE_JSON for callers that do
+  // no selection.
+  //
   // Never expose the real contact block to the LLM. It has mutated URLs before
   // (2026-07-08 Glean run typo'd the LinkedIn slug). Swap in a sentinel; the
   // real contact is pinned downstream by the identity lock. This removes the
   // chance to corrupt it at the source.
-  const promptResume = JSON.parse(JSON.stringify(RESUME_BASE_JSON));
+  const promptResume = JSON.parse(JSON.stringify(baseJson));
   promptResume.contact = ['CONTACT_INJECTED_DOWNSTREAM_DO_NOT_MODIFY'];
   return `You are tailoring a resume for a specific job. Your ONLY job is conservative editing — NOT rewriting.
 
@@ -1148,7 +1164,33 @@ Return this JSON (no markdown fences, no commentary):
     send({ step: 'resume', status: 'start' });
 
     const emphasis = jdData?.emphasis || 'Backend';
-    const resumePrompt = buildResumePrompt(job, emphasis);
+
+    // ── Deterministic entry selection (2026-08-05 entry-selection-pool brief) ──
+    // BEFORE the LLM runs, pick which experience/project entries appear from
+    // ENTRY_POOL based on the JD. This is pure code, never an LLM decision: the
+    // tailoring step below rewords the selected entries but cannot add or swap
+    // any. jdRequiredSkills also feeds the skills lock later, so compute it once
+    // here. jdText gives the selector the full JD prose for whole-token matching.
+    const jdRequiredSkills = (jdData?.matched_skills || [])
+      .concat(jdData?.missing_skills || [])
+      .concat(job.tags || []);
+    const jdText = `${job.title || ''} ${job.desc || ''} ${(job.tags || []).join(' ')}`;
+    let jdBaseJson = RESUME_BASE_JSON;
+    let selection = { selected: [], dropped: [] };
+    try {
+      selection = selectEntries(ENTRY_POOL, jdRequiredSkills, jdText, BASE_BULLET_CHAR_BUDGET);
+      jdBaseJson = selection.json;
+      const selStr = selection.selected.map(s => `${s.id} (${s.reason})`).join('; ');
+      const dropStr = selection.dropped.map(d => `${d.id} (${d.reason})`).join('; ');
+      console.log(`[ai.selection] selected: ${selStr}`);
+      console.log(`[ai.selection] dropped: ${dropStr}`);
+      if (!aborted) send({ step: 'resume', type: 'selection', selected: selection.selected, dropped: selection.dropped });
+    } catch (e) {
+      console.warn('[ai.selection] selector threw (non-fatal), using base resume:', e.message);
+      jdBaseJson = RESUME_BASE_JSON;
+    }
+
+    const resumePrompt = buildResumePrompt(job, emphasis, jdBaseJson);
 
     // Stream into a buffer instead of pushing chunks to UI — JSON tokens look
     // ugly mid-flight, and we render the polished text in one shot at the end.
@@ -1165,10 +1207,11 @@ Return this JSON (no markdown fences, no commentary):
     const parsed = safeParseJSON(resumeJsonRaw);
     if (parsed.error) {
       console.warn('[resume] LLM did not return valid JSON, falling back to base. Error:', parsed.error);
-      // Deep-clone the base: the skills lock and bullet guard below mutate
-      // tailoredJson in place, so aliasing RESUME_BASE_JSON here would corrupt
-      // the module-level base for subsequent requests.
-      tailoredJson = JSON.parse(JSON.stringify(RESUME_BASE_JSON));
+      // Deep-clone the per-JD selected base: the skills lock and bullet guard
+      // below mutate tailoredJson in place, so aliasing it would corrupt the
+      // shared base for subsequent requests. Falling back to the selected base
+      // (not the default) keeps the JD-appropriate entries on parse failure.
+      tailoredJson = JSON.parse(JSON.stringify(jdBaseJson));
       send({ step: 'resume', type: 'warning', message: 'LLM JSON parse failed — using base resume. ' + parsed.error });
     } else {
       tailoredJson = parsed.data;
@@ -1218,11 +1261,20 @@ Return this JSON (no markdown fences, no commentary):
     // applyAdjacency(jd tags): base categories are preserved and no skill token
     // can appear unless it is in the base or justified by ADJACENCY_MAP. Skills
     // NOT in the curated map are never added, so there is no fabrication path.
-    const jdRequiredSkills = (jdData?.matched_skills || [])
-      .concat(jdData?.missing_skills || [])
-      .concat(job.tags || []);
+    // jdRequiredSkills was computed above (before selection). The skills section
+    // is identical across selections, so lock it against the canonical base.
     const adjacencyResult = lockSkillsSection(tailoredJson, RESUME_BASE_JSON, jdRequiredSkills);
     tailoredJson = adjacencyResult.json;
+    // Fix 3 (2026-08-04 layout brief): pin section order to SECTION_ORDER
+    // (Skills, Experience, Projects, Education). The tailoring prompt already
+    // forbids restructuring, but order is a layout invariant, so it is enforced
+    // in code rather than trusted to the model, same rationale as the skills
+    // lock directly above. Sections are reordered, never added or dropped.
+    tailoredJson = enforceSectionOrder(tailoredJson);
+    // Project ORDER lock: re-impose newest-first date order on projects, since the
+    // tailoring LLM can reorder the project items it emits. Deterministic, code-
+    // enforced, same rationale as the skills and section-order locks above.
+    tailoredJson = enforceProjectDateOrder(tailoredJson);
     // Chars adjacency added to the skills section: reserved from the bullet
     // budget below (Fix 2) so bullets plus grown skills stay in the one-page box.
     const skillsGrowth = adjacencyResult.skillsGrowth || 0;
@@ -1236,7 +1288,7 @@ Return this JSON (no markdown fences, no commentary):
     if (ENABLE_BULLET_KEYWORDS) {
       try {
         const enforced = await enforceBulletKeywords(
-          tailoredJson, RESUME_BASE_JSON, CANDIDATE_FACTS,
+          tailoredJson, jdBaseJson, CANDIDATE_FACTS,
           jdData || { tags: job.tags },
           { judge: defaultBulletJudge, regenerate: defaultBulletRegenerate }
         );
@@ -1247,7 +1299,7 @@ Return this JSON (no markdown fences, no commentary):
           if (!aborted) send({ step: 'resume', type: 'warning', message: 'Bullet keyword guard: ' + w });
         }
         // Cap reworded bullets to prevent keyword stuffing; revert the excess.
-        const capped = capRewordedBullets(tailoredJson, RESUME_BASE_JSON, MAX_TAILORED_BULLETS);
+        const capped = capRewordedBullets(tailoredJson, jdBaseJson, MAX_TAILORED_BULLETS);
         tailoredJson = capped.json;
         if (capped.reverted > 0) {
           const m = `reverted ${capped.reverted} bullet(s) to base wording to respect MAX_TAILORED_BULLETS=${MAX_TAILORED_BULLETS}`;
@@ -1269,7 +1321,7 @@ Return this JSON (no markdown fences, no commentary):
     let lengthResolutions = [];
     try {
       const lenFit = await enforceBulletLength(
-        tailoredJson, RESUME_BASE_JSON, CANDIDATE_FACTS,
+        tailoredJson, jdBaseJson, CANDIDATE_FACTS,
         jdData || { tags: job.tags },
         { regenerate: defaultBulletShorten, judge: defaultBulletJudge, skillsGrowth }
       );
@@ -1286,8 +1338,16 @@ Return this JSON (no markdown fences, no commentary):
 
     // Render text version for UI display + validation.
     const resumeText = renderResumeText(tailoredJson);
-    const validation = validateResumeOutput(resumeText);
-    const diff = generateResumeDiff(RESUME_BASE, resumeText);
+    // Only require the companies the selector actually placed on this JD's resume,
+    // so a benched entry (e.g. GSPANN when no ML JD selected it) is not flagged as
+    // a "missing company" fabrication signal.
+    const jdBaseText = renderResumeText(jdBaseJson);
+    const requiredCompanies = SOURCE_FACTS.companies.filter(c => jdBaseText.includes(c));
+    const validation = validateResumeOutput(resumeText, { requiredCompanies });
+    // Diff against the per-JD selected base so the line-by-line diff reflects the
+    // entries actually chosen for this JD (e.g. a swapped-in Denari), not the
+    // default resume.
+    const diff = generateResumeDiff(jdBaseText, resumeText);
 
     // Send the rendered text as a single chunk so the UI shows the final resume.
     send({ step: 'resume', type: 'chunk', text: resumeText });
@@ -1299,6 +1359,7 @@ Return this JSON (no markdown fences, no commentary):
       adjacencyAdded: adjacencyResult.added,
       bulletKeywordResolutions,
       lengthResolutions,
+      entrySelection: selection,
     });
 
     // ── STEP 3: Cover Letter ───────────────────────────────────────────────────
@@ -1823,3 +1884,12 @@ module.exports.enforceCoverLetter = enforceCoverLetter;
 // Length-fit enforcement (2026-07-30 brief).
 module.exports.enforceBulletLength = enforceBulletLength;
 module.exports.needsNarrativeRewrite = needsNarrativeRewrite;
+// Harness surface (2026-08-04 layout brief). The layout work has to be verified
+// by rendering real tailored output, not just base content, so the offline
+// verification harness needs the same prompt/LLM/regenerator functions the SSE
+// route uses. Exported read-only; the route is still the only caller in prod.
+module.exports.buildResumePrompt = buildResumePrompt;
+module.exports.streamText = streamText;
+module.exports.defaultBulletJudge = defaultBulletJudge;
+module.exports.defaultBulletRegenerate = defaultBulletRegenerate;
+module.exports.defaultBulletShorten = defaultBulletShorten;

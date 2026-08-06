@@ -7,7 +7,9 @@
 //   - Times New Roman, 11pt body, 16pt name
 //   - 13pt exact line height (matches PDF LINE_H)
 //   - Underscore separators between sections (matches PDF drawSeparator)
-//   - 7pt gap after each experience/project item (matches PDF GAP_POST_ITEM)
+//   - 5pt gap after the last item in a section (matches PDF GAP_POST_ITEM)
+//   - 8pt gap above each employer block, 4pt above each project subsection
+//     (matches PDF GAP_EMPLOYER_PRE / GAP_SUBSECTION_PRE)
 //   - Bullet text 11pt from content edge (matches PDF BULLET_TEXT_X - CONTENT_X)
 //
 // Apple Pages opens .docx natively, so this is the "give me an editable copy"
@@ -31,8 +33,16 @@ const FONT = 'Times New Roman';
 const LINE = 260;              // 13pt — matches PDF LINE_H
 const NAME_LINE = 320;         // 16pt — matches PDF NAME_SIZE for name paragraph
 const GAP_NAME_AFTER = 60;     // small after-name pad before contact line
-const GAP_POST_ITEM = 140;     // 7pt — matches PDF GAP_POST_ITEM
-const GAP_SUBSECTION_PRE = 140; // 7pt — matches PDF GAP_SUBSECTION_PRE
+const GAP_POST_ITEM = 100;     // 5pt, matches PDF R.GAP_POST_ITEM
+// Asymmetric spacing (2026-08-04 hierarchy brief, Fix 1). An employer block
+// gets 2x the gap a project subsection gets, so whitespace alone marks where
+// one employer's work ends. Mirrors PDF R.GAP_EMPLOYER_PRE / R.GAP_SUBSECTION_PRE.
+const GAP_EMPLOYER_PRE = 160;   // 8pt, matches PDF R.GAP_EMPLOYER_PRE
+const GAP_SUBSECTION_PRE = 80;  // 4pt, matches PDF R.GAP_SUBSECTION_PRE
+// One indent level for project subsection headers and their bullets, so they
+// sit visibly under the employer. Mirrors PDF R.INDENT_SUB (11pt).
+const INDENT_SUB = 220;         // 11pt in twips
+const SUBSECTION_SIZE = 21;     // 10.5pt in half-points, matches PDF R.SUBSECTION_SIZE
 
 const SEPARATOR = '_'.repeat(97); // Matches PDF R.SEPARATOR
 
@@ -129,10 +139,16 @@ function titlePara(titleLeft, dateRight, locationRight, linkUrl) {
   });
 }
 
+// Project subsection header. Indented one level and rendered bold-ITALIC at
+// 10.5pt so it is never the same visual token as a bold employer header, and
+// given half the pre-gap an employer block gets. Carries no date and no
+// location by design; those are employer-level signals (matches PDF
+// drawSubsection).
 function subSectionPara(text) {
   return new Paragraph({
     spacing: spacing({ before: GAP_SUBSECTION_PRE }),
-    children: [new TextRun({ text, bold: true, font: FONT, size: BODY_SIZE })],
+    indent: { left: INDENT_SUB },
+    children: [new TextRun({ text, bold: true, italics: true, font: FONT, size: SUBSECTION_SIZE })],
   });
 }
 
@@ -144,10 +160,13 @@ function rolePara(text) {
   });
 }
 
-function bulletPara(text) {
+// `indent` shifts bullets that hang off a project subsection one level in.
+// Bullets that hang directly off an employer pass 0 and stay flush.
+function bulletPara(text, indent = 0) {
   return new Paragraph({
     numbering: { reference: 'resume-bullets', level: 0 },
     spacing: spacing(),
+    ...(indent ? { indent: { left: 220 + indent, hanging: 220 } } : {}),
     children: [new TextRun({ text, font: FONT, size: BODY_SIZE })],
   });
 }
@@ -259,15 +278,21 @@ async function renderResumeDocx(content, outPath) {
         );
       }
     } else if (section.type === 'experience') {
-      for (const item of section.items || []) {
+      // Asymmetric spacing (Fix 1): matches the experience branch in
+      // pdfRender.js drawResumeContent: the gap goes ABOVE each employer block
+      // and only between blocks; GAP_POST_ITEM is spent once, after the last.
+      const expItems = section.items || [];
+      for (let j = 0; j < expItems.length; j++) {
+        const item = expItems[j];
+        if (j > 0) children.push(gapPara(GAP_EMPLOYER_PRE));
         children.push(titlePara(item.title, item.date, item.location));
         if (item.role) children.push(rolePara(item.role));
         for (const sub of item.subsections || []) {
+          const indent = sub.name ? INDENT_SUB : 0;
           if (sub.name) children.push(subSectionPara(sub.name));
-          for (const b of sub.bullets || []) children.push(bulletPara(b));
+          for (const b of sub.bullets || []) children.push(bulletPara(b, indent));
         }
-        // GAP_POST_ITEM — matches PDF advance(GAP_POST_ITEM) after each item.
-        children.push(gapPara(GAP_POST_ITEM));
+        if (j === expItems.length - 1) children.push(gapPara(GAP_POST_ITEM));
       }
     } else if (section.type === 'projects') {
       for (const item of section.items || []) {

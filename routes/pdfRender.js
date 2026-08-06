@@ -46,15 +46,49 @@ const R = {
   // (12/18/5/5) on 2026-05-19 to make room for BASE content that grew
   // past the previous render budget. Visually still has breathing room.
   GAP_POST_ITEM: 5,
-  GAP_SUBSECTION_PRE: 5,
+  // ── Asymmetric spacing (2026-08-04 hierarchy brief, Fix 1) ────────────────
+  // The load-bearing change. Before this, GAP_SUBSECTION_PRE and GAP_POST_ITEM
+  // were BOTH 5pt, so the gap above a project subsection and the gap above the
+  // next employer were identical. Equal spacing everywhere is exactly what made
+  // "Carrier API Gateway" (an Enidus project) and "Software Developer, Orahi"
+  // (a different employer) read as peers. Gestalt proximity, not a horizontal
+  // rule, is what separates the levels: an employer block gets 2x the gap a
+  // project subsection gets, so the eye groups each project under its employer.
+  //
+  //   GAP_EMPLOYER_PRE (8) / GAP_SUBSECTION_PRE (4) = 2.0x
+  //
+  // Deliberately spacing-NEUTRAL overall. The base-content tier is the
+  // renderer's last fallback; if base stops fitting, renderResumePdf throws
+  // instead of falling back, so vertical cost here is not free. The employer
+  // gap is paid for by halving the subsection gap and by advancing
+  // GAP_POST_ITEM only after the LAST item in a section rather than after every
+  // item. Net cost across the experience section is +3pt, not +18pt. Base had
+  // 2pt of headroom before this brief and has 23pt after (the Fix 2 skills trim
+  // paid for the indentation rewrap). Do not raise GAP_EMPLOYER_PRE without
+  // re-running scripts/measure_layout.js.
+  GAP_EMPLOYER_PRE: 8,
+  GAP_SUBSECTION_PRE: 4,
   FONT_NORMAL: 'Times-Roman',
   FONT_BOLD: 'Times-Bold',
   FONT_ITALIC: 'Times-Italic',
+  // Project subsection headers render bold-ITALIC so they are not the same
+  // visual token as a bold employer header. Style differentiation is the second
+  // half of Fix 1; indentation and spacing are the other two.
+  FONT_BOLD_ITALIC: 'Times-BoldItalic',
   BODY_SIZE: 11,
+  // Project subsection headers sit 0.5pt below body size. Combined with
+  // bold-italic this puts them unambiguously a level below an employer header
+  // without shrinking so far that they stop reading as headers.
+  SUBSECTION_SIZE: 10.5,
   NAME_SIZE: 16,
   BULLET_X: 17,
   BULLET_TEXT_X: 28,
   CONTENT_X: 17,
+  // One indent level for project subsection headers and the bullets underneath
+  // them. Employer headers, and bullets that hang directly off an employer with
+  // no project subsection (Orahi, GSPANN), stay flush left, so indentation
+  // alone tells the reader which level a line belongs to.
+  INDENT_SUB: 11,
   SEPARATOR: '_'.repeat(97),
 };
 
@@ -136,6 +170,7 @@ class ResumeWriter {
         section: R.GAP_SECTION,
         postItem: R.GAP_POST_ITEM,
         subsectionPre: R.GAP_SUBSECTION_PRE,
+        employerPre: R.GAP_EMPLOYER_PRE,
       },
       opts.gaps || {}
     );
@@ -313,15 +348,29 @@ class ResumeWriter {
     this.advance(this.lineH);
   }
 
+  // Project subsection header (the three Enidus projects). Three signals put it
+  // a level below an employer header, per the 2026-08-04 hierarchy brief:
+  //   1. indented one level (INDENT_SUB) while employer headers stay flush left
+  //   2. bold-italic at 10.5pt, so it is never the same token as a bold 11pt
+  //      employer line
+  //   3. a smaller pre-gap than an employer block gets (see GAP_EMPLOYER_PRE)
+  //
+  // It deliberately takes NO date and NO location argument. Right-aligned date
+  // and location are employer-level signals and stay exclusive to
+  // drawJobHeader; a project subsection that carried them would re-create the
+  // exact ambiguity this change exists to remove.
   drawSubsection(text) {
     this._checkBreak(this.gaps.subsectionPre + this.lineH);
     this.advance(this.gaps.subsectionPre);
-    this._drawAt(R.CONTENT_X, this.y, text, R.FONT_BOLD, R.BODY_SIZE);
+    this._drawAt(R.CONTENT_X + R.INDENT_SUB, this.y, text, R.FONT_BOLD_ITALIC, R.SUBSECTION_SIZE);
     this.advance(this.lineH);
   }
 
-  drawBullet(text) {
-    const maxW = R.PAGE_W - R.MARGIN_R - R.BULLET_TEXT_X;
+  // indent: horizontal offset for bullets that hang off a project subsection.
+  // Bullets that hang directly off an employer (Orahi, GSPANN) pass 0 and stay
+  // flush with the employer header above them.
+  drawBullet(text, indent = 0) {
+    const maxW = R.PAGE_W - R.MARGIN_R - R.BULLET_TEXT_X - indent;
     // Active widow guard. preventWidow returns the original text unchanged if
     // it's already widow-safe, otherwise NBSP-joins the last 3 words so they
     // wrap as a unit. Warn only if the fix can't succeed (e.g., 3-word group
@@ -337,9 +386,9 @@ class ResumeWriter {
     for (let i = 0; i < lines.length; i++) {
       this._checkBreak(this.lineH);
       if (i === 0) {
-        this._drawAt(R.BULLET_X, this.y, '\u2022', R.FONT_NORMAL, R.BODY_SIZE);
+        this._drawAt(R.BULLET_X + indent, this.y, '\u2022', R.FONT_NORMAL, R.BODY_SIZE);
       }
-      this._drawAt(R.BULLET_TEXT_X, this.y, lines[i], R.FONT_NORMAL, R.BODY_SIZE);
+      this._drawAt(R.BULLET_TEXT_X + indent, this.y, lines[i], R.FONT_NORMAL, R.BODY_SIZE);
       this.advance(this.lineH);
     }
   }
@@ -492,6 +541,16 @@ const LINE_H_SAFETY_BUFFER = 6;
 
 // Render-or-measure path shared by both passes. Mutating writer.gaps before
 // calling this controls how much vertical space the layout consumes.
+// Split a project date like "August 2026 | Research" into { date, qualifier }
+// on the LAST " | " so the qualifier can render bold (like an experience
+// location). A date with no " | " returns an undefined qualifier.
+function splitProjectDate(raw) {
+  if (!raw) return { date: raw, qualifier: undefined };
+  const i = raw.lastIndexOf(' | ');
+  if (i === -1) return { date: raw, qualifier: undefined };
+  return { date: raw.slice(0, i), qualifier: raw.slice(i + 3) };
+}
+
 function drawResumeContent(w, content) {
   w.drawName(content.name);
   w.drawContact(content.contact || []);
@@ -509,18 +568,37 @@ function drawResumeContent(w, content) {
         w.drawPlain(item.degree, { rightText: item.graduation, rightFont: R.FONT_ITALIC });
       }
     } else if (section.type === 'experience') {
-      for (const item of section.items || []) {
+      // Asymmetric spacing (Fix 1). The gap goes ABOVE each employer block
+      // rather than below, and only between blocks, so the space that
+      // separates two employers is a single deliberate GAP_EMPLOYER_PRE
+      // instead of the old "postItem after every item" rhythm that spent the
+      // same 5pt between employers and between projects. GAP_POST_ITEM is
+      // spent once, after the last item, to keep the section separator off the
+      // final bullet.
+      const items = section.items || [];
+      for (let j = 0; j < items.length; j++) {
+        const item = items[j];
+        if (j > 0) w.advance(w.gaps.employerPre);
         w.drawJobHeader(item.title, item.date, item.location);
         if (item.role) w.drawRole(item.role);
         for (const sub of item.subsections || []) {
+          // A named subsection is a project under this employer: header and
+          // bullets both step in one level. An unnamed subsection is just the
+          // employer's own bullets (Orahi, GSPANN) and stays flush left.
+          const indent = sub.name ? R.INDENT_SUB : 0;
           if (sub.name) w.drawSubsection(sub.name);
-          for (const b of sub.bullets || []) w.drawBullet(b);
+          for (const b of sub.bullets || []) w.drawBullet(b, indent);
         }
-        w.advance(w.gaps.postItem);
+        if (j === items.length - 1) w.advance(w.gaps.postItem);
       }
     } else if (section.type === 'projects') {
       for (const item of section.items || []) {
-        w.drawJobHeader(item.title, item.date, undefined, item.url);
+        // Split the project date on its last " | " so the qualifier (Personal
+        // Project / Research / Capstone) renders BOLD like an experience
+        // location, while the date itself stays italic. drawJobHeader already
+        // bolds the "location" slot, so route the qualifier through it.
+        const { date, qualifier } = splitProjectDate(item.date);
+        w.drawJobHeader(item.title, date, qualifier, item.url);
         for (const b of item.bullets || []) w.drawBullet(b);
         w.advance(w.gaps.postItem);
       }
@@ -557,10 +635,16 @@ async function renderResumePdf(content, outPath) {
   // Section gaps are FIXED tight (R.GAP_SECTION). The underfill adjuster never
   // touches them — section-gap inflation is what made v3 "float apart." All
   // page-filling is done by growing leading (lineH) only.
+  // employerPre is listed explicitly even though the ResumeWriter constructor
+  // already defaults it. This object is the single place the tier-1 gap set is
+  // enumerated, so a knob missing here is a knob that silently keeps its
+  // default if this set is ever tuned — and employerPre is exactly the gap the
+  // hierarchy depends on (see GAP_EMPLOYER_PRE).
   const gaps = {
     section: R.GAP_SECTION,
     postItem: R.GAP_POST_ITEM,
     subsectionPre: R.GAP_SUBSECTION_PRE,
+    employerPre: R.GAP_EMPLOYER_PRE,
   };
 
   // Helper: measure used height + page count for a candidate leading.
@@ -790,4 +874,16 @@ async function renderCoverPdf(content, outPath) {
   });
 }
 
-module.exports = { renderResumePdf, renderCoverPdf };
+// Measure-only probe used by scripts/measure_layout.js. Walks the same layout
+// path as a real render at baseline leading and returns the vertical budget,
+// so layout changes can be costed before they are rendered. No file is written.
+function measureResumeHeight(content, opts = {}) {
+  const m = new ResumeWriter(null, { measureOnly: true, ...opts });
+  drawResumeContent(m, content);
+  const used = m.y - R.MARGIN_T;
+  const pages = m.doc.bufferedPageRange().count;
+  try { m.doc.end(); } catch (_) { /* noop sink */ }
+  return { used, usable: R.PAGE_H - R.MARGIN_T - R.MARGIN_B, pages };
+}
+
+module.exports = { renderResumePdf, renderCoverPdf, measureResumeHeight };

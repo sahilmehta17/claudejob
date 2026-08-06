@@ -431,10 +431,13 @@ const { SYNONYM_MAP, FACT_FRAGMENT_MAP } = require('../routes/resumeContent');
 const { BASE_BULLET_CHAR_BUDGET } = require('../routes/resumeContent');
 
 const clone = (j) => JSON.parse(JSON.stringify(j));
-// Canonical bullet paths inside RESUME_BASE_JSON (experience section index 0).
-const COPILOT = (t) => t.sections[0].items[0].subsections[0].bullets; // AI Copilot
-const REPORTS = (t) => t.sections[0].items[0].subsections[1].bullets; // Reports
-const ORAHI   = (t) => t.sections[0].items[1].subsections[0].bullets; // Orahi
+// Canonical bullet paths inside RESUME_BASE_JSON. Resolved by section TYPE, not
+// by array index: SECTION_ORDER moved skills above experience (2026-08-04 layout
+// brief), and these tests are about bullet handling, not section order.
+const EXP     = (t) => t.sections.find(s => s.type === 'experience');
+const COPILOT = (t) => EXP(t).items[0].subsections[0].bullets; // AI Copilot
+const REPORTS = (t) => EXP(t).items[0].subsections[1].bullets; // Reports
+const ORAHI   = (t) => EXP(t).items[1].subsections[0].bullets; // Orahi
 const JD_KW = { title: 'AI Engineer', company: 'Acme', tags: ['REST APIs', 'semantic search', 'RBAC', 'FastAPI'], desc: 'Build RAG systems.' };
 
 console.log('\nbullet-keyword validator:');
@@ -459,12 +462,25 @@ atest('validateTailoredBullets: flags injected tools not in facts (Go, Rust)', a
   assert.ok(terms.includes('rust'), 'expected Rust flagged, got: ' + JSON.stringify(terms));
 });
 
-atest('validateTailoredBullets: does NOT flag a tool already on the base resume (Kubernetes)', async () => {
+atest('validateTailoredBullets: does NOT flag a tool already on the base resume (Docker)', async () => {
+  const t = clone(RESUME_BASE_JSON);
+  COPILOT(t)[0] = 'Deployed the reseller copilot on Docker with per-tenant Qdrant isolation.';
+  const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
+  const terms = res.flags.filter(f => f.check === 'injection').map(f => f.term);
+  assert.ok(!terms.includes('docker'), 'Docker is on the base resume; must not flag');
+});
+
+// Companion to the above, and a regression guard for the 2026-08-04 skills trim.
+// Kubernetes was cut from the skills section because no CANDIDATE_FACTS entry
+// supports it. Trimming a skill must therefore TIGHTEN the fabrication guard:
+// once a tool is off the resume, a bullet claiming it is an injection.
+atest('validateTailoredBullets: flags a tool trimmed off the base resume (Kubernetes)', async () => {
   const t = clone(RESUME_BASE_JSON);
   COPILOT(t)[0] = 'Deployed the reseller copilot on Kubernetes with per-tenant Qdrant isolation.';
   const res = await validateTailoredBullets(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW);
   const terms = res.flags.filter(f => f.check === 'injection').map(f => f.term);
-  assert.ok(!terms.includes('kubernetes'), 'Kubernetes is on the base resume; must not flag');
+  assert.ok(terms.includes('kubernetes'),
+    'Kubernetes is no longer a claimed skill; must flag as injected, got: ' + JSON.stringify(terms));
 });
 
 // Check 1: synonym (conditional allow).
@@ -539,7 +555,7 @@ atest('enforceBulletKeywords: a flagged bullet regenerated clean is kept', async
 
 atest('enforceBulletKeywords: second failure falls back to the base bullet', async () => {
   const t = clone(RESUME_BASE_JSON);
-  const baseBullet0 = RESUME_BASE_JSON.sections[0].items[0].subsections[0].bullets[0];
+  const baseBullet0 = COPILOT(RESUME_BASE_JSON)[0];
   COPILOT(t)[0] = 'Shipped a Go service for the reseller copilot.';
   const regenerate = async () => 'Rebuilt it in Go and Rust for the copilot.'; // still injected
   const out = await enforceBulletKeywords(t, RESUME_BASE_JSON, CANDIDATE_FACTS, JD_KW, { regenerate });
@@ -587,6 +603,102 @@ test('checks module exports the three reusable checks', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Fix 1: deterministic skills lock
 // ─────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Section order lock (2026-08-04 layout brief, Fix 3)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\nsection order lock (Fix 3):');
+
+const { SECTION_ORDER, enforceSectionOrder } = require('../routes/resumeContent');
+
+test('SECTION_ORDER is Skills, Experience, Projects, Education', () => {
+  assert.deepStrictEqual(SECTION_ORDER, ['skills', 'experience', 'projects', 'education']);
+});
+
+test('RESUME_BASE_JSON ships in canonical section order', () => {
+  const types = RESUME_BASE_JSON.sections.map(s => s.type);
+  assert.deepStrictEqual(types, SECTION_ORDER,
+    'base section order drifted, got: ' + JSON.stringify(types));
+  assert.strictEqual(RESUME_BASE_JSON.sections[0].header, 'TECHNICAL SKILLS',
+    'skills must lead the resume');
+});
+
+test('enforceSectionOrder reorders an LLM resume that emitted the old order', () => {
+  const t = clone(RESUME_BASE_JSON);
+  // Simulate the model echoing the pre-brief order (experience first).
+  t.sections = [
+    t.sections.find(s => s.type === 'experience'),
+    t.sections.find(s => s.type === 'projects'),
+    t.sections.find(s => s.type === 'education'),
+    t.sections.find(s => s.type === 'skills'),
+  ];
+  const out = enforceSectionOrder(t);
+  assert.deepStrictEqual(out.sections.map(s => s.type), SECTION_ORDER);
+});
+
+test('enforceSectionOrder never drops sections, including unknown types', () => {
+  const t = clone(RESUME_BASE_JSON);
+  t.sections.push({ type: 'awards', header: 'AWARDS', items: [] });
+  const out = enforceSectionOrder(t);
+  assert.strictEqual(out.sections.length, 5, 'no section may be lost while reordering');
+  assert.strictEqual(out.sections[4].type, 'awards', 'unknown types sort to the end');
+});
+
+test('enforceSectionOrder is idempotent', () => {
+  const once = enforceSectionOrder(clone(RESUME_BASE_JSON)).sections.map(s => s.type);
+  const twice = enforceSectionOrder(enforceSectionOrder(clone(RESUME_BASE_JSON))).sections.map(s => s.type);
+  assert.deepStrictEqual(once, twice);
+});
+
+test('enforceSectionOrder tolerates malformed input', () => {
+  assert.doesNotThrow(() => enforceSectionOrder(null));
+  assert.doesNotThrow(() => enforceSectionOrder({}));
+  assert.doesNotThrow(() => enforceSectionOrder({ sections: 'nope' }));
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skills section shape (2026-08-04 layout brief, Fix 2)
+// ─────────────────────────────────────────────────────────────────────────────
+console.log('\nskills shape (Fix 2):');
+
+test('skills section keeps exactly 4 labeled groups, balanced order (longest not first)', () => {
+  // 2026-08-05 brief Part 5: lines rebalanced to within ~15% and reordered so the
+  // block no longer opens with the longest line (was "AI / LLM Systems").
+  const skills = RESUME_BASE_JSON.sections.find(s => s.type === 'skills');
+  assert.strictEqual(skills.items.length, 4, 'must stay at 4 groups');
+  assert.deepStrictEqual(skills.items.map(i => i.label),
+    ['Languages', 'AI / LLM Systems', 'Frameworks', 'Infra & Tools']);
+});
+
+test('skills lines carry no proficiency labels, ratings, or self-rated years', () => {
+  const skills = RESUME_BASE_JSON.sections.find(s => s.type === 'skills');
+  for (const item of skills.items) {
+    assert.ok(!/\b(expert|advanced|intermediate|beginner|proficient|fluent)\b/i.test(item.value),
+      `proficiency label in "${item.label}": ${item.value}`);
+    assert.ok(!/[★*]{2,}|\b\d+\s*(?:\+\s*)?(?:yrs?|years)\b/i.test(item.value),
+      `rating or years-of-experience in "${item.label}": ${item.value}`);
+  }
+});
+
+test('every ADJACENCY_MAP justifier still present after the skills trim', () => {
+  const { ADJACENCY_MAP, extractUserSkills } = require('../routes/resumeContent');
+  const tokens = extractUserSkills(RESUME_BASE_JSON);
+  // These 19 were the justifiers the map could actually reach before the trim.
+  // If a future trim removes one, applyAdjacency silently stops injecting the
+  // skills it unlocks, so pin the list rather than recomputing it.
+  const REQUIRED = [
+    'aws s3', 'claude code', 'django', 'docker', 'express', 'fastapi', 'flask',
+    'git', 'grpc', 'node.js', 'postgresql', 'python', 'pytorch', 'qdrant',
+    'rag', 'react', 'sql', 'tool calling', 'vector search',
+  ];
+  const missing = REQUIRED.filter(r => !tokens.has(r));
+  assert.strictEqual(missing.length, 0, 'lost adjacency justifiers: ' + missing.join(', '));
+  // And each one is genuinely reachable as a justifier in the map.
+  const inMap = new Set();
+  for (const v of Object.values(ADJACENCY_MAP)) v.forEach(x => inMap.add(x.toLowerCase()));
+  const orphans = REQUIRED.filter(r => !inMap.has(r));
+  assert.strictEqual(orphans.length, 0, 'no longer justifiers in ADJACENCY_MAP: ' + orphans.join(', '));
+});
+
 console.log('\nskills lock (Fix 1):');
 
 test('lockSkillsSection: discards LLM skills (C++), keeps 4 base labels, adds adjacency skills', () => {
@@ -604,7 +716,7 @@ test('lockSkillsSection: discards LLM skills (C++), keeps 4 base labels, adds ad
   assert.ok(/Pinecone/.test(joined), 'adjacency-justified Pinecone should appear: ' + joined);
   assert.deepStrictEqual(
     skills.items.map(i => i.label),
-    ['AI / LLM Systems', 'Languages', 'Frameworks', 'Infra & Tools'],
+    ['Languages', 'AI / LLM Systems', 'Frameworks', 'Infra & Tools'],
     'the 4 base category labels must be preserved'
   );
 });
@@ -809,7 +921,7 @@ test('lockSkillsSection: caps skills growth to roughly one line', () => {
 });
 
 console.log('\nlength-fit enforcement (Fix 1):');
-const COPILOT_B0 = RESUME_BASE_JSON.sections[0].items[0].subsections[0].bullets[0];
+const COPILOT_B0 = COPILOT(RESUME_BASE_JSON)[0];
 
 atest('enforceBulletLength: shortens an over-length bullet and keeps total <= budget', async () => {
   const t = clone(RESUME_BASE_JSON);
@@ -843,7 +955,7 @@ atest('enforceBulletLength: a resume already within budget is left unchanged', a
 
 atest('enforceBulletLength: reverting one over-length bullet leaves the others untouched', async () => {
   const t = clone(RESUME_BASE_JSON);
-  const baseB1 = RESUME_BASE_JSON.sections[0].items[0].subsections[0].bullets[1];
+  const baseB1 = COPILOT(RESUME_BASE_JSON)[1];
   COPILOT(t)[0] = COPILOT_B0 + ('  padding words'.repeat(40)); // over; shortening will fail
   const tweaked = baseB1.replace('Designed', 'Built'); // within tolerance (shorter), stays tailored
   COPILOT(t)[1] = tweaked;

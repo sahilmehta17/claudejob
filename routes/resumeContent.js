@@ -5,6 +5,13 @@
 // All renderers (plain-text for prompts/UI, PDF via Python) derive from this.
 // Why JSON: lets the LLM emit modified content matching a strict schema, which
 // is far more reliable than parsing free-form text. Format never drifts.
+//
+// 2026-08-05 (entry-selection-pool brief): the experience and project entries no
+// longer live inline. They live in ENTRY_POOL below, each carrying selection
+// metadata, and RESUME_BASE_JSON's experience/project item lists are produced by
+// the deterministic selectEntries() selector. The DEFAULT selection reproduces
+// today's resume EXCEPT GSPANN is benched and GoodEnough takes its freed slot.
+// Selection is deterministic code, never an LLM decision.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PHONE = process.env.RESUME_PHONE || '608-960-5508';
@@ -42,9 +49,352 @@ const CANDIDATE_FACTS = `
 - chef-drop-brief — 20 pytest tests covering all 9 evals plus the revision logic and CLI surfaces.
 - chef-drop-brief target roles: Growth-AI / Lifecycle-AI / GTM-AI roles, DTC subscription companies, companies using Braze / Klaviyo / Customer.io / Postscript or similar lifecycle platforms, roles naming Claude Code / Claude Skills / MCP / AI workflow orchestration, and any role mentioning brand voice, copy eval, content quality pipelines, or marketing AI safety.
 - chef-drop-brief adjacency tags earned: Claude Code Skills, MCP, Anthropic SDK, Braze, lifecycle marketing, CRM, sentence-transformers, eval-driven LLM safety, structured-output, field-scoped revision loops.
+- GoodEnough (started August 2026): a preregistered non-inferiority study testing whether a quantized 1.7B local model (Qwen3, Q4_K_M on a commodity CPU) holds answer quality within a fixed 10-point margin of a hosted 70B baseline (Groq Llama-3.3), evaluating ~1,700 benchmark items across 8 MMLU domains and GSM8K at 95% confidence using exact paired-item intervals (McNemar / Clopper-Pearson). Apparatus is dependency-free Python: paired-item scoring, frozen splits and seeds, a resumable budget-aware runner with per-request token, cost, and latency instrumentation. Measured: local inference costs ~90% less per query but runs ~8x HIGHER p50 latency than the hosted API (local CPU is slower than Groq, roughly 2.4s vs 0.27s per item). LATENCY DIRECTION (state exactly): local is CHEAPER but SLOWER; never say local is faster/lower-latency. Headline accuracy (non-inferior on N of 8 domains) and the exact p50 figures are pending the hosted run / build_map.py.
 `.trim();
 
-const RESUME_BASE_JSON = {
+// ─────────────────────────────────────────────────────────────────────────────
+// SECTION_ORDER: canonical top-to-bottom section order (2026-08-04 brief, Fix 3).
+//
+// Skills leads: at about a year of full-time experience, the skills block is the
+// first thing most screeners look for, and it is the cheapest section to scan.
+// Experience still outranks projects; education shrinks to the bottom.
+//
+// This is the ONLY place section order is defined. It is applied to the base at
+// module load and re-applied to every tailored resume in routes/ai.js, so the
+// order cannot drift just because the tailoring model emitted its sections in a
+// different sequence. Same reasoning as the deterministic skills lock: a layout
+// invariant belongs in code, not in a prompt instruction the model may ignore.
+// ─────────────────────────────────────────────────────────────────────────────
+const SECTION_ORDER = ['skills', 'experience', 'projects', 'education'];
+
+/**
+ * enforceSectionOrder(json) → json (mutated in place, and returned)
+ * Stable-sorts sections into SECTION_ORDER. Any section whose `type` is not in
+ * the list keeps its relative position at the end rather than being dropped;
+ * reordering must never lose content.
+ */
+function enforceSectionOrder(json) {
+  if (!json || !Array.isArray(json.sections)) return json;
+  const rank = (type) => {
+    const i = SECTION_ORDER.indexOf(type);
+    return i === -1 ? SECTION_ORDER.length : i;
+  };
+  json.sections = json.sections
+    .map((section, i) => ({ section, i }))
+    .sort((a, b) => rank(a.section.type) - rank(b.section.type) || a.i - b.i)
+    .map(x => x.section);
+  return json;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ENTRY POOL + DETERMINISTIC SELECTOR (2026-08-05 entry-selection-pool brief)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// The one-page render supports roughly THREE project entries at most. A prior
+// attempt at a third project header pushed the render to two pages, and the
+// recorded cause was the header itself, not just the bullet characters. Enforced
+// in the selector.
+const MAX_PROJECT_ENTRIES = 3;
+
+// Guardrail: a JD cannot produce an unrecognizable resume. At most this many
+// non-default entries may be swapped in per run (across all sections).
+const MAX_NON_DEFAULT_SWAPS = 2;
+
+// A small bonus applied to `default: true` entries so score ties resolve to
+// today's resume. Kept BELOW 1 so a non-default with a single genuine JD tag
+// match (integer score >= 1) always beats a default matching nothing.
+const DEFAULT_BONUS = 0.1;
+
+// Part 4: leave the door open for a Publications section later without a schema
+// change. `publication` is a permitted kind; nothing renders it today.
+const VALID_ENTRY_KINDS = ['experience', 'project', 'publication'];
+function isValidEntryKind(kind) {
+  return VALID_ENTRY_KINDS.includes(kind);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ENTRY_POOL — every experience and project entry, each with selection metadata.
+//
+// Shape: { id, kind, status, default, pinned, eligible, tags, weight, chrono,
+//          item, bulletsByStatus? }
+//   status  : 'ready' (may show results) | 'apparatus' (built, no findings) |
+//             'planned' (hard-gated off, never selected)
+//   default : in the default resume when nothing else wins
+//   pinned  : always included, never dropped (Enidus)
+//   eligible: false = can never be selected until flipped (mcp-census)
+//   chrono  : experience ordering only, higher = more recent (kept chronological
+//             in the experience section regardless of score)
+//   item    : the existing render item (title/date/url/bullets|subsections)
+//   bulletsByStatus: status-gated bullets; resolveEntryItem() picks the set
+//
+// The `item` objects for the entries that survive in the DEFAULT selection
+// (enidus, orahi, cloudguard, claudejob) are byte-identical to the pre-brief
+// inline entries — the regression guard depends on that.
+// ─────────────────────────────────────────────────────────────────────────────
+const ENTRY_POOL = [
+  // ── Experience ────────────────────────────────────────────────────────────
+  {
+    id: 'enidus',
+    kind: 'experience',
+    status: 'ready',
+    default: true,
+    pinned: true,
+    eligible: true,
+    tags: ['fastapi', 'python', 'llm', 'agents', 'rag', 'qdrant', 'postgresql', 'node.js', 'react', 'typescript', 'tool calling', 'vector search', 'multi-tenant', 'telecom'],
+    weight: 0,
+    chrono: 3,
+    item: {
+      // Company-as-header format (Enidus only): `title` holds the company,
+      // rendered as the bold header line with date/location; `role` renders
+      // as an italic subline beneath. Orahi/GSPANN keep the single-line
+      // "Role, Company (Internship)" title with no `role` field.
+      title: 'Enidus USA LLC. (Full-Time)',
+      role: 'AI/Full-Stack Engineer',
+      date: 'June 2025 - Present',
+      location: 'Hicksville, NY',
+      subsections: [
+        {
+          name: 'AI Chatbot & Agentic Copilot for T-Mobile for Business',
+          bullets: [
+            "Shipped a multi-tenant conversational AI assistant for a T-Mobile IoT reseller platform (FastAPI, Anthropic Claude / OpenAI function-calling, Qdrant, PostgreSQL on Azure); 9 LLM-orchestrated workflows collapse 10-12 portal clicks per reseller action into a single natural-language command. In pilot with 15 tenants, 25+ customers, 100+ users.",
+            "Designed a hybrid retrieval layer combining Qdrant vector search with BM25 keyword retrieval via Reciprocal Rank Fusion (k=60) and regex fast-paths for identifier inputs; led a vector-first routing inversion when the product pivoted consumer-facing, moving intent top-1 accuracy from 73.5% to 89.0% on a 442-query eval corpus.",
+            "Built defense-in-depth safety at the LLM boundary: 43 Pydantic-typed tool handlers with RBAC-filtered catalogs the model never sees in full, parameterized SQL templates with row-level security at execution, per-tenant Qdrant isolation, and user-confirmed writes; zero hallucination incidents in pilot.",
+            "Migrated in-memory session state to a durable SQL-backed flow state machine (optimistic locking, automatic session expiration), preserving 9 multi-step transaction flows across deploys and worker scaling.",
+          ],
+        },
+        {
+          name: 'Custom Reports & Dashboards Platform',
+          bullets: [
+            "Owned a self-serve full-stack analytics product end-to-end alone (React, Node.js + Express, SQL Server with stored procedures) letting enterprise customers compose reports, custom dashboards, and charts over their own data; cut analytics turnaround from days to minutes.",
+            "Hardened against multi-tenant attack classes via stored-procedure CRUD contracts, two-layer filter validation, runtime tenant-clause injection, JWT auth, per-session CSRF rotation, strict CSP, and AES-256-CBC encryption.",
+          ],
+        },
+        {
+          name: 'Carrier API Gateway (BFF)',
+          bullets: [
+            "Built a TypeScript BFF (Node.js + Express) as the sole integration layer to T-Mobile's carrier APIs, with per-request RS256 Proof-of-Possession token generation over OAuth 2.0 and a translation layer mapping legacy portal formats to the new PIL API contract.",
+          ],
+        },
+      ],
+    },
+  },
+  {
+    id: 'orahi',
+    kind: 'experience',
+    status: 'ready',
+    default: true,
+    pinned: false,
+    eligible: true,
+    tags: ['python', 'flask', 'rest apis', 'k-means', 'clustering', 'machine learning', 'algorithms'],
+    weight: 0,
+    chrono: 2,
+    item: {
+      title: 'Software Developer, Orahi (Internship)',
+      date: 'July 2024 - August 2024',
+      location: 'Remote',
+      subsections: [
+        {
+          name: '',
+          bullets: [
+            "Designed a dynamic bus route adjustment algorithm using K-means clustering, reducing manual student-assignment effort by 80%; optimized Flask REST APIs for telemetry ingestion.",
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // GSPANN is the weakest, oldest entry and comes OFF the default resume, but
+    // it is the only evidence of TRAINING a model rather than calling an API, so
+    // it stays available for ML/DS-flavored JDs. Benched, not deleted.
+    id: 'gspann',
+    kind: 'experience',
+    status: 'ready',
+    default: false,
+    pinned: false,
+    eligible: true,
+    tags: ['ml', 'deep learning', 'pytorch', 'cnn', 'computer vision', 'data science', 'model training'],
+    weight: 0,
+    chrono: 1,
+    item: {
+      title: 'Data Scientist, GSPANN Technologies Inc. (Internship)',
+      date: 'June 2023 - August 2023',
+      location: 'Remote',
+      subsections: [
+        {
+          name: '',
+          bullets: [
+            "Built a CNN-based pneumonia detection model on chest X-ray images; iterated on preprocessing and data augmentation to improve generalization.",
+          ],
+        },
+      ],
+    },
+  },
+
+  // ── Projects ──────────────────────────────────────────────────────────────
+  // Pool order matters: default project ties resolve to this order, so the
+  // default resume renders CloudGuard, ClaudeJob, GoodEnough in that sequence.
+  {
+    id: 'cloudguard',
+    kind: 'project',
+    status: 'ready',
+    default: true,
+    pinned: false,
+    eligible: true,
+    tags: ['llm', 'agents', 'evals', 'safety', 'prompt injection', 'tool selection', 'mcp', 'python', 'fastapi', 'sentence-transformers', 'reliability', 'aws', 'guardrails'],
+    weight: 0,
+    dateSort: 202607,
+    item: {
+      title: 'CloudGuard - Reliability & Safety Harness for LLM Cloud Agents',
+      date: 'July 2026 | Personal Project',
+      url: 'https://github.com/sahilmehta17/cloudguard',
+      bullets: [
+        "Built a test-driven eval and safety harness (Python, FastAPI, MCP, sentence-transformers) for LLM agents operating cloud infrastructure against a real AWS mock (Moto); 57 tests, all headline numbers written to committed JSON artifacts.",
+        "Showed a bag-of-words tool-router degrades tool-selection to 0.83 while an embeddings router recovers it to 1.00 (Sonnet and Haiku); added blast-radius guardrails (1.00 precision and recall) and an indirect prompt-injection red-team cutting the hijack-attempt rate to 0 percent.",
+      ],
+    },
+  },
+  {
+    // ClaudeJob benched from the default (2026-08-06): a resume-tailoring tool can
+    // read as counterintuitive to some employers, so it yields its default slot to
+    // Denari and swaps back in for JDs about agentic pipelines, structured output,
+    // SSE, validators, or Anthropic tooling. Content unchanged; still selectable.
+    id: 'claudejob',
+    kind: 'project',
+    status: 'ready',
+    default: false,
+    pinned: false,
+    eligible: true,
+    tags: ['llm', 'agents', 'structured outputs', 'evals', 'node.js', 'anthropic', 'sse', 'pipeline', 'python', 'validators'],
+    weight: 0,
+    dateSort: 202604,
+    item: {
+      title: 'ClaudeJob - Agentic Resume Tailoring Pipeline',
+      date: 'April 2026 - Present | Personal Project',
+      url: 'https://github.com/sahilmehta17/claudejob',
+      bullets: [
+        "Built an end-to-end agentic pipeline (Node.js + Anthropic SDK + SSE streaming) that ingests live job postings, tailors a structured-output JSON resume per role, and generates pixel-matching PDFs via pdfkit; actively used to power my own AI Engineer applications.",
+        "Engineered a validator suite mirroring LLM-content failure modes: 30+ banned AI-resume cliché regex, source-fact validation against a pinned base to catch fabricated stats, and a jargon-lead heuristic. Deterministic adjacency-skill injection (curated, never LLM-fabricated); 47 passing unit tests.",
+      ],
+    },
+  },
+  {
+    // GoodEnough takes the default slot GSPANN vacates. Status 'apparatus':
+    // emits only what is BUILT (design, harness, method), never findings. Its
+    // bullets point at cost / latency / quantized-local / statistical
+    // non-inferiority so they read as visibly different work from CloudGuard's
+    // agent-safety framing. The `ready` bullet is a TODO placeholder with the
+    // numbers left blank; Sahil flips `status` to 'ready' and fills them from
+    // measured results once the per-slice map exists. No predicted results here.
+    id: 'goodenough',
+    kind: 'project',
+    // 'ready' so the outcome bullets render. The metrics are UNMISTAKABLE
+    // placeholders ([XX] / [X]) at Sahil's request, not measured results and not
+    // realistic-looking fakes: they read as "fill me in" on the page and can
+    // never be mistaken for a real claim if the resume ships before the per-slice
+    // results map lands. Replace every [..] with a measured number, then this is
+    // a fully truthful entry. The apparatus bullet set below is retained (it is
+    // the honest, number-free version) if you ever want to revert to it.
+    status: 'ready',
+    default: true,
+    pinned: false,
+    eligible: true,
+    tags: ['cost', 'latency', 'quantized', 'local inference', 'non-inferiority', 'evals', 'benchmarking', 'statistics', 'llm', 'reproducibility'],
+    weight: 0,
+    dateSort: 202608,
+    item: {
+      title: 'GoodEnough - Local vs Hosted LLM Non-Inferiority Study',
+      date: 'August 2026 | Research',
+      url: 'https://github.com/sahilmehta17/GoodEnough',
+    },
+    bulletsByStatus: {
+      apparatus: [
+        "Designed a preregistered non-inferiority study comparing quantized local inference against a hosted LLM baseline on cost, latency, and answer quality, with the non-inferiority margin fixed before any data collection and paired-item measurement across matched prompts.",
+        "Built the evaluation apparatus for reproducibility: pinned local and hosted model configs, deterministic scoring, and frozen data splits and seeds, so every cost and latency comparison is auditable and re-runnable.",
+      ],
+      // Final, Sahil-verified wording (2026-08-06). All figures are measured or
+      // conservatively defensible today: 95% CI, 10-point margin, ~1,700 items,
+      // 8 MMLU domains + GSM8K, exact paired-item (McNemar / Clopper-Pearson),
+      // ~90% lower cost, ~8x HIGHER p50 latency for local (CPU is slower than the
+      // hosted Groq API; ~2.4s vs ~0.27s per item). Do NOT reverse the latency
+      // direction: local is CHEAPER but SLOWER. Two figures become exact once the
+      // hosted run + build_map.py finish (~2 days out): the exact latency p50, and
+      // a headline "non-inferior on N of 8 domains" line.
+      ready: [
+        "Ran a preregistered non-inferiority study testing whether a quantized 1.7B local model (Qwen3, Q4_K_M on a commodity CPU) holds answer quality within a 10-point margin of a hosted 70B baseline (Llama-3.3), evaluating ~1,700 benchmark items across 8 MMLU domains and GSM8K at 95% confidence using exact paired-item (McNemar / Clopper-Pearson) intervals.",
+        "Built the evaluation apparatus in dependency-free Python (paired-item scoring, frozen splits and seeds, a resumable budget-aware runner with per-request token, cost, and latency instrumentation); measured local inference at ~90% lower cost per query but ~8x higher p50 latency than the hosted API, and mapped which domains the small model matches within the margin.",
+      ],
+    },
+  },
+  {
+    // Denari (RAG capstone) holds a default project slot (2026-08-06, promoted
+    // from benched when ClaudeJob was benched). Content drawn from CANDIDATE_FACTS,
+    // facts unchanged. Being the oldest project (2025) it renders last by date.
+    id: 'denari',
+    kind: 'project',
+    status: 'ready',
+    default: true,
+    pinned: false,
+    eligible: true,
+    tags: ['rag', 'retrieval', 'embeddings', 'bm25', 'tf-idf', 'vector search', 'timescaledb', 'docker', 's3', 'semantic search', 're-ranking'],
+    weight: 0,
+    dateSort: 202505,
+    item: {
+      title: 'Denari - Hybrid-Retrieval RAG over 22K+ Documents',
+      date: 'January 2025 - May 2025 | UW-Madison Capstone',
+      bullets: [
+        "Built a retrieval-augmented QA system over 22K documents and 300K embeddings (TypeScript, TimescaleDB, Docker, S3, OpenAI APIs), using hybrid BM25 + TF-IDF retrieval with semantic re-ranking to reach 73% QA accuracy.",
+        "Cut query latency 40% and led Agile delivery of 25+ production features across the capstone team.",
+      ],
+    },
+  },
+  {
+    // chef-drop-brief: benched, selectable for Growth-AI / lifecycle / Claude
+    // Code Skills / MCP / Braze JDs. Content from CANDIDATE_FACTS.
+    id: 'chef-drop-brief',
+    kind: 'project',
+    status: 'ready',
+    default: false,
+    pinned: false,
+    eligible: true,
+    tags: ['claude code skills', 'mcp', 'braze', 'lifecycle marketing', 'evals', 'sentence-transformers', 'anthropic sdk', 'growth', 'crm', 'copy'],
+    weight: 0,
+    dateSort: 202605,
+    item: {
+      title: 'chef-drop-brief - Eval-Gated Lifecycle Campaign Generator',
+      date: 'May 2026 | Personal Project',
+      url: 'https://github.com/sahilmehta17/chef-drop-brief',
+      bullets: [
+        "Built and published an installable Claude Code Skill that drafts Braze-ready chef-drop lifecycle campaigns (email, SMS, push, A/B variants) for meal-delivery launches, porting an eval-gated LLM pattern to growth-marketing copy.",
+        "Gated every draft behind 9 deterministic copy evals (claimed-fact verification, dietary-contradiction checks, banned-cliche regex, brand-voice cosine similarity, channel limits, policy safety) with a field-scoped one-shot revision loop; 20 pytest tests.",
+      ],
+    },
+  },
+  {
+    // MCP tool-selection census: not started. Hard-gated OFF (status 'planned'
+    // and eligible:false) so it can never be selected until both are flipped.
+    id: 'mcp-census',
+    kind: 'project',
+    status: 'planned',
+    default: false,
+    pinned: false,
+    eligible: false,
+    tags: ['mcp', 'model context protocol', 'tool selection', 'evals', 'census', 'benchmarking'],
+    weight: 0,
+    dateSort: 0,
+    item: {
+      title: 'MCP Tool-Selection Census',
+      date: 'Planned',
+      bullets: [],
+    },
+  },
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESUME_TEMPLATE — the resume shell around the pool-selected entries. Holds the
+// fixed, non-pool content: name, contact, summary, skills, education, plus the
+// experience/projects section headers whose item lists the selector fills.
+// ─────────────────────────────────────────────────────────────────────────────
+const RESUME_TEMPLATE = {
   name: 'Sahil Mehta',
   // Contact items can be plain strings or { text, url } objects (renderers
   // make the latter clickable). Linkedin and Github show as the word with the
@@ -54,7 +404,7 @@ const RESUME_BASE_JSON = {
     'New York City, NY · Open to relocation',
     'sahilmehta0204@gmail.com',
     PHONE,
-    { text: 'sahilmehta.dev', url: 'https://sahilmehta.dev' },
+    { text: 'Portfolio', url: 'https://sahilmehta.dev' },
     { text: 'Github', url: 'https://github.com/sahilmehta17' },
     { text: 'Linkedin', url: 'https://www.linkedin.com/in/sahil-mehta-87357b1b9/' },
   ],
@@ -65,112 +415,8 @@ const RESUME_BASE_JSON = {
   // doesn't get lost.
   summary: '',
   sections: [
-    {
-      type: 'experience',
-      header: 'PROFESSIONAL EXPERIENCE',
-      items: [
-        {
-          // Company-as-header format (Enidus only): `title` holds the company,
-          // rendered as the bold header line with date/location; `role` renders
-          // as an italic subline beneath. Orahi/GSPANN keep the single-line
-          // "Role, Company (Internship)" title with no `role` field.
-          title: 'Enidus USA LLC. (Full-Time)',
-          role: 'AI/Full-Stack Engineer',
-          date: 'June 2025 - Present',
-          location: 'Hicksville, NY',
-          subsections: [
-            {
-              name: 'AI Chatbot & Agentic Copilot for T-Mobile for Business',
-              bullets: [
-                "Shipped a multi-tenant conversational AI assistant for a T-Mobile IoT reseller platform (FastAPI, Anthropic Claude / OpenAI function-calling, Qdrant, PostgreSQL on Azure); 9 LLM-orchestrated workflows collapse 10-12 portal clicks per reseller action into a single natural-language command. In pilot with 15 tenants, 25+ customers, 100+ users.",
-                "Designed a hybrid retrieval layer combining Qdrant vector search with BM25 keyword retrieval via Reciprocal Rank Fusion (k=60) and regex fast-paths for identifier inputs; led a vector-first routing inversion when the product pivoted consumer-facing, moving intent top-1 accuracy from 73.5% to 89.0% on a 442-query eval corpus.",
-                "Built defense-in-depth safety at the LLM boundary: 43 Pydantic-typed tool handlers with RBAC-filtered catalogs the model never sees in full, parameterized SQL templates with row-level security at execution, per-tenant Qdrant isolation, and user-confirmed writes; zero hallucination incidents in pilot.",
-                "Migrated in-memory session state to a durable SQL-backed flow state machine (optimistic locking, automatic session expiration), preserving 9 multi-step transaction flows across deploys and worker scaling.",
-              ],
-            },
-            {
-              name: 'Custom Reports & Dashboards Platform',
-              bullets: [
-                "Owned a self-serve full-stack analytics product end-to-end alone (React, Node.js + Express, SQL Server with stored procedures) letting enterprise customers compose reports, custom dashboards, and charts over their own data; cut analytics turnaround from days to minutes.",
-                "Hardened against multi-tenant attack classes via stored-procedure CRUD contracts, two-layer filter validation, runtime tenant-clause injection, JWT auth, per-session CSRF rotation, strict CSP, and AES-256-CBC encryption.",
-              ],
-            },
-            {
-              name: 'Carrier API Gateway (BFF)',
-              bullets: [
-                "Built a TypeScript BFF (Node.js + Express) as the sole integration layer to T-Mobile's carrier APIs, with per-request RS256 Proof-of-Possession token generation over OAuth 2.0 and a translation layer mapping legacy portal formats to the new PIL API contract.",
-              ],
-            },
-          ],
-        },
-        {
-          title: 'Software Developer, Orahi (Internship)',
-          date: 'July 2024 - August 2024',
-          location: 'Remote',
-          subsections: [
-            {
-              name: '',
-              bullets: [
-                "Designed a dynamic bus route adjustment algorithm using K-means clustering, reducing manual student-assignment effort by 80%; optimized Flask REST APIs for telemetry ingestion.",
-              ],
-            },
-          ],
-        },
-        {
-          title: 'Data Scientist, GSPANN Technologies Inc. (Internship)',
-          date: 'June 2023 - August 2023',
-          location: 'Remote',
-          subsections: [
-            {
-              name: '',
-              bullets: [
-                "Built a CNN-based pneumonia detection model on chest X-ray images; iterated on preprocessing and data augmentation to improve generalization.",
-              ],
-            },
-          ],
-        },
-      ],
-    },
-    {
-      type: 'projects',
-      header: 'PROJECTS',
-      items: [
-        // NOTE: chef-drop-brief intentionally NOT in BASE — its 2 bullets
-        // (771 chars) pushed total over the 1-page render budget. The project
-        // remains in CANDIDATE_FACTS (cover letters + tailored resumes pull
-        // it from there) and in ADJACENCY_MAP (Claude Code Skills / MCP /
-        // Braze / lifecycle-marketing JDs still trigger its adjacency tags).
-        // For Growth-AI roles where chef-drop-brief should lead the resume,
-        // the LLM tailoring step pulls it from CANDIDATE_FACTS and inserts
-        // ahead of ClaudeJob — see the targeted regenerate scripts in
-        // scripts/regenerate_*.js for examples.
-        {
-          title: 'CloudGuard - Reliability & Safety Harness for LLM Cloud Agents',
-          date: 'July 2026 | Personal Project',
-          url: 'https://github.com/sahilmehta17/cloudguard',
-          bullets: [
-            "Built a test-driven eval and safety harness (Python, FastAPI, MCP, sentence-transformers) for LLM agents operating cloud infrastructure against a real AWS mock (Moto); 57 tests, all headline numbers written to committed JSON artifacts.",
-            "Showed a bag-of-words tool-router degrades tool-selection to 0.83 while an embeddings router recovers it to 1.00 (Sonnet and Haiku); added blast-radius guardrails (1.00 precision and recall) and an indirect prompt-injection red-team cutting the hijack-attempt rate to 0 percent.",
-          ],
-        },
-        {
-          title: 'ClaudeJob - Agentic Resume Tailoring Pipeline',
-          date: 'April 2026 - Present | Personal Project',
-          url: 'https://github.com/sahilmehta17/claudejob',
-          bullets: [
-            "Built an end-to-end agentic pipeline (Node.js + Anthropic SDK + SSE streaming) that ingests live job postings, tailors a structured-output JSON resume per role, and generates pixel-matching PDFs via pdfkit; actively used to power my own AI Engineer applications.",
-            "Engineered a validator suite mirroring LLM-content failure modes: 30+ banned AI-resume cliché regex, source-fact validation against a pinned base to catch fabricated stats, and a jargon-lead heuristic. Deterministic adjacency-skill injection (curated, never LLM-fabricated); 47 passing unit tests.",
-          ],
-        },
-        // NOTE: Denari RAG capstone moved OUT of BASE on 2026-07-23 to make room
-        // for CloudGuard while keeping the resume on one page (adding CloudGuard's
-        // 2 bullets + a third project header pushed the render to 2 pages; the
-        // third header is the load-bearing cost, not just the bullet chars). Denari
-        // remains fully in CANDIDATE_FACTS above, so cover letters and per-JD
-        // tailored resumes still pull it; for capstone/academic-heavy JDs the
-        // tailoring step can reinsert it ahead of a weaker entry.
-      ],
-    },
+    { type: 'experience', header: 'PROFESSIONAL EXPERIENCE', items: [] },
+    { type: 'projects', header: 'PROJECTS', items: [] },
     {
       // Education moved below experience + projects (2026-07-23): with ~1 year
       // of full-time experience plus strong projects, the work leads; the degree
@@ -185,17 +431,296 @@ const RESUME_BASE_JSON = {
       ],
     },
     {
+      // ── Skills (2026-08-05 brief, Part 5: balance) ────────────────────────
+      // Four labeled groups, redistributed so the four rendered lines sit within
+      // ~15% of each other in length and the block does NOT open with the
+      // longest line (the old base opened with the long "AI / LLM Systems" line,
+      // stepping the right edge inward down the block). Order now leads with
+      // Languages; the longest line (Infra & Tools) sits last.
+      //
+      // Redistribution moves, no invented skills: PyTorch joined the AI/LLM line
+      // (it is the ML runtime behind the AI work), "structured outputs
+      // (Pydantic)" joined Frameworks (Pydantic is a framework/lib), and "vector
+      // search (Qdrant)" joined Infra & Tools (Qdrant is the vector DB).
+      //
+      // Removed from the base line: "sentence-transformers". Verified against
+      // ADJACENCY_MAP first — it is a MAP *key* (a JD that names it re-injects it
+      // via applyAdjacency, justified by rag / pytorch / openai apis, which all
+      // remain), never a justifier VALUE another key depends on, so removing it
+      // severs no adjacency path. Same precedent as the 2026-08-04 removal of
+      // "Claude Code Skills" and "streaming/SSE". The claim also survives in the
+      // CloudGuard and chef-drop-brief project bullets and in CANDIDATE_FACTS.
+      //
+      // All 19 ADJACENCY_MAP justifier VALUES still appear here (aws s3, claude
+      // code, django, docker, express, fastapi, flask, git, grpc, node.js,
+      // postgresql, python, pytorch, qdrant, rag, react, sql, tool calling,
+      // vector search), so applyAdjacency keeps every path it had. Re-check with
+      // scripts/measure_layout.js before trimming further.
+      //
+      // "eval frameworks" is deliberately retained and kept on the AI line:
+      // evaluation and observability is the differentiator most candidates omit.
+      // No proficiency labels, star ratings, or self-rated years, by design.
       type: 'skills',
       header: 'TECHNICAL SKILLS',
       items: [
-        { label: 'AI / LLM Systems', value: 'LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, vector search (Qdrant), prompt engineering, eval frameworks, structured outputs (Pydantic), streaming/SSE, sentence-transformers, PyTorch, TensorFlow' },
-        { label: 'Languages', value: 'Python, JavaScript/TypeScript, Java, C, SQL, Kotlin, Swift, R. Cert: SnowPro Associate & Core (2024).' },
-        { label: 'Frameworks', value: 'FastAPI, Node.js, Express, React, Next.js, Angular, Flask, Django, React Native' },
-        { label: 'Infra & Tools', value: 'PostgreSQL, REST, gRPC, AWS S3, GCP, Docker, Kubernetes, Git, Claude Code, Claude Code Skills, MCP, JWT/OAuth, RBAC' },
+        { label: 'Languages', value: 'Python, JavaScript/TypeScript, Java, C, SQL, R. Cert: SnowPro Associate & Core (2024).' },
+        { label: 'AI / LLM Systems', value: 'LLM APIs (Claude, OpenAI), tool calling, agent orchestration, RAG, eval frameworks, PyTorch' },
+        { label: 'Frameworks', value: 'FastAPI, Node.js, Express, React, Next.js, Flask, Django, structured outputs (Pydantic)' },
+        { label: 'Infra & Tools', value: 'PostgreSQL, gRPC, AWS S3, Docker, Git, Claude Code, MCP, JWT/OAuth, RBAC, vector search (Qdrant)' },
       ],
     },
   ],
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Selector internals (all deterministic, no LLM).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Whole-token, case-insensitive match of `tag` against a JD haystack. Boundaries
+// are non-alphanumeric so multi-word tags ("vector search", "model training")
+// and punctuated tags ("tf-idf", "node.js") match as whole tokens, not
+// substrings ("s3" must not match inside "s3cret").
+function tokenMatch(tag, haystack) {
+  const t = String(tag).toLowerCase().trim();
+  if (!t) return false;
+  const esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp('(^|[^a-z0-9])' + esc + '([^a-z0-9]|$)', 'i');
+  return re.test(haystack);
+}
+
+function scoreEntry(entry, haystack) {
+  let tagScore = 0;
+  for (const tag of entry.tags || []) if (tokenMatch(tag, haystack)) tagScore++;
+  const score = tagScore + (entry.weight || 0) + (entry.default ? DEFAULT_BONUS : 0);
+  return { score, tagScore };
+}
+
+// Resolve the render item for an entry, applying status gating: an 'apparatus'
+// entry emits only its apparatus bullets; a 'ready' entry emits its ready
+// bullets (or the item's own bullets when no status-gated set is given).
+function resolveEntryItem(entry) {
+  const item = JSON.parse(JSON.stringify(entry.item || {}));
+  if (entry.bulletsByStatus) {
+    if (entry.status === 'apparatus') {
+      item.bullets = JSON.parse(JSON.stringify(entry.bulletsByStatus.apparatus || []));
+    } else if (entry.status === 'ready') {
+      item.bullets = JSON.parse(JSON.stringify(entry.bulletsByStatus.ready || entry.item.bullets || []));
+    }
+  }
+  return item;
+}
+
+// Character count of an entry's resolved bullets (matches sumBulletChars scope:
+// bullet text only, across item.bullets and any subsection bullets).
+function entryBulletChars(entry) {
+  const item = resolveEntryItem(entry);
+  let n = 0;
+  for (const b of item.bullets || []) n += String(b).length;
+  for (const sub of item.subsections || []) {
+    for (const b of sub.bullets || []) n += String(b).length;
+  }
+  return n;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// enforceProjectDateOrder(json) → json (mutated, returned)
+// Deterministic ORDER lock for the projects section: sort items newest-first by
+// the date they actually carry, so the render order cannot drift regardless of
+// how a tailoring LLM reordered them. Parses "Month YYYY" out of the date string
+// (taking the LATEST month in a range like "January 2025 - May 2025"); falls back
+// to a bare 4-digit year, else sorts to the end. Same rationale as the skills and
+// section-order locks: a layout invariant belongs in code, not a prompt.
+// ─────────────────────────────────────────────────────────────────────────────
+const MONTH_INDEX = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+};
+function latestYearMonth(dateStr) {
+  const s = String(dateStr || '');
+  const re = /(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})/gi;
+  let best = -1, m;
+  while ((m = re.exec(s))) {
+    const v = Number(m[2]) * 100 + MONTH_INDEX[m[1].toLowerCase()];
+    if (v > best) best = v;
+  }
+  if (best === -1) {
+    const y = /(\d{4})/.exec(s);
+    if (y) best = Number(y[1]) * 100;
+  }
+  return best;
+}
+function enforceProjectDateOrder(json) {
+  if (!json || !Array.isArray(json.sections)) return json;
+  const sec = json.sections.find(s => s.type === 'projects');
+  if (!sec || !Array.isArray(sec.items)) return json;
+  sec.items = sec.items
+    .map((it, i) => ({ it, i }))
+    .sort((a, b) => latestYearMonth(b.it.date) - latestYearMonth(a.it.date) || a.i - b.i)
+    .map(x => x.it);
+  return json;
+}
+
+function buildResumeJson(experienceItems, projectItems) {
+  const json = JSON.parse(JSON.stringify(RESUME_TEMPLATE));
+  const expSec = json.sections.find(s => s.type === 'experience');
+  const projSec = json.sections.find(s => s.type === 'projects');
+  if (expSec) expSec.items = experienceItems;
+  if (projSec) projSec.items = projectItems;
+  return enforceSectionOrder(json);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// selectEntries(pool, jdRequiredSkills, jdText, budget, opts)
+//
+// Deterministic entry selection. Returns:
+//   { json, selected: [{id, score, reason}], dropped: [{id, reason}] }
+//
+// Algorithm:
+//   1. Drop status:'planned' and eligible:false (hard gates).
+//   2. Always include pinned entries; seed defaults.
+//   3. Score each entry: JD tag matches + weight + default bonus.
+//   4. Rank non-default candidates (that match at least one JD tag) and swap
+//      them in, at most MAX_NON_DEFAULT_SWAPS per run. Projects are capped at
+//      MAX_PROJECT_ENTRIES: a swap-in displaces the lowest-scoring default
+//      project only if it outscores it. Experience swap-ins are additive.
+//   5. Enforce the char budget: drop the lowest-scoring non-pinned entries
+//      (non-defaults first) until the total fits.
+//   6. Experience stays chronological; projects are ordered by score.
+// ─────────────────────────────────────────────────────────────────────────────
+function selectEntries(pool, jdRequiredSkills = [], jdText = '', budget = BASE_BULLET_CHAR_BUDGET, opts = {}) {
+  const maxProjects = opts.maxProjectEntries != null ? opts.maxProjectEntries : MAX_PROJECT_ENTRIES;
+  const maxSwaps = opts.maxSwaps != null ? opts.maxSwaps : MAX_NON_DEFAULT_SWAPS;
+
+  const haystack = (`${[].concat(jdRequiredSkills || []).join(' ')} ${jdText || ''}`).toLowerCase();
+
+  const selected = [];
+  const dropped = [];
+
+  // 1. eligibility filter (hard gates)
+  const eligible = [];
+  for (const e of pool) {
+    if (e.status === 'planned') { dropped.push({ id: e.id, reason: 'status planned (hard gate)' }); continue; }
+    if (e.eligible === false) { dropped.push({ id: e.id, reason: 'eligible:false (hard gate)' }); continue; }
+    eligible.push(e);
+  }
+
+  const scoreOf = new Map();
+  for (const e of eligible) scoreOf.set(e.id, scoreEntry(e, haystack));
+
+  const isProject = (e) => e.kind === 'project';
+  const isExperience = (e) => e.kind === 'experience';
+
+  // Entries of a kind with no render section today (e.g. publication) are never
+  // placed. Recorded as dropped so the reason is visible on SSE/console.
+  for (const e of eligible) {
+    if (!isProject(e) && !isExperience(e)) {
+      dropped.push({ id: e.id, reason: `kind '${e.kind}' has no render section yet` });
+    }
+  }
+
+  // 2. seed pinned + defaults
+  let selExp = eligible.filter(e => isExperience(e) && (e.pinned || e.default));
+  let selProj = eligible.filter(e => isProject(e) && e.default);
+
+  // 3. swap candidates: non-default, non-pinned, matched at least one JD tag
+  const cmp = (a, b) => {
+    const sa = scoreOf.get(a.id).score, sb = scoreOf.get(b.id).score;
+    if (sb !== sa) return sb - sa;
+    if (!!b.default !== !!a.default) return (b.default ? 1 : 0) - (a.default ? 1 : 0);
+    if ((b.weight || 0) !== (a.weight || 0)) return (b.weight || 0) - (a.weight || 0);
+    return pool.indexOf(a) - pool.indexOf(b);
+  };
+  const swapCandidates = eligible
+    .filter(e => (isProject(e) || isExperience(e)) && !e.default && !e.pinned && scoreOf.get(e.id).tagScore >= 1)
+    .sort(cmp);
+
+  let swapsUsed = 0;
+  for (const cand of swapCandidates) {
+    if (swapsUsed >= maxSwaps) {
+      dropped.push({ id: cand.id, reason: `swap cap reached (max ${maxSwaps} non-default swaps per run)` });
+      continue;
+    }
+    const cScore = scoreOf.get(cand.id).score;
+    if (isProject(cand)) {
+      if (selProj.length < maxProjects) {
+        selProj.push(cand);
+        swapsUsed++;
+      } else {
+        // Displace the lowest-scoring droppable default; on a tie displace the
+        // one later in the pool (the newest/weakest yields its slot first).
+        const droppable = selProj.filter(p => !p.pinned)
+          .sort((a, b) => scoreOf.get(a.id).score - scoreOf.get(b.id).score || pool.indexOf(b) - pool.indexOf(a));
+        const victim = droppable[0];
+        if (victim && cScore > scoreOf.get(victim.id).score) {
+          selProj = selProj.filter(p => p.id !== victim.id);
+          selProj.push(cand);
+          swapsUsed++;
+          dropped.push({ id: victim.id, reason: `displaced by higher-scoring ${cand.id} (${cScore.toFixed(1)} > ${scoreOf.get(victim.id).score.toFixed(1)}) at ${maxProjects}-project cap` });
+        } else {
+          dropped.push({ id: cand.id, reason: `did not outscore the lowest default project at the ${maxProjects}-project cap` });
+        }
+      }
+    } else {
+      // Experience swap-ins are additive (no hard cap on the experience section).
+      selExp.push(cand);
+      swapsUsed++;
+    }
+  }
+
+  // 4. char-budget enforcement. Drop the lowest-SCORING non-pinned entries until
+  // the total fits, so a high-scoring swap-in (e.g. GSPANN on an ML JD) is kept
+  // and a JD-irrelevant default yields instead. Ties break toward dropping a
+  // project before an experience entry (experience is the more valuable section),
+  // then toward the newest/weakest (later in the pool). Pinned entries (Enidus)
+  // are never dropped.
+  const totalChars = () =>
+    selExp.reduce((n, e) => n + entryBulletChars(e), 0) +
+    selProj.reduce((n, e) => n + entryBulletChars(e), 0);
+  while (totalChars() > budget) {
+    const droppable = [...selExp, ...selProj].filter(e => !e.pinned);
+    if (droppable.length === 0) break;
+    droppable.sort((a, b) => {
+      const sa = scoreOf.get(a.id).score, sb = scoreOf.get(b.id).score;
+      if (sa !== sb) return sa - sb; // lowest score first
+      const ak = a.kind === 'project' ? 0 : 1, bk = b.kind === 'project' ? 0 : 1;
+      if (ak !== bk) return ak - bk; // drop a project before an experience entry
+      return pool.indexOf(b) - pool.indexOf(a); // newest/weakest first
+    });
+    const victim = droppable[0];
+    selExp = selExp.filter(e => e.id !== victim.id);
+    selProj = selProj.filter(e => e.id !== victim.id);
+    dropped.push({ id: victim.id, reason: `dropped to meet the ${budget}-char one-page budget` });
+  }
+
+  // 5. ordering. Both sections render newest-first by date (resume convention),
+  //    independent of the score that decided WHICH entries were selected.
+  //    Experience uses `chrono`; projects use `dateSort` (YYYYMM), with score as
+  //    the tiebreak when two entries share a date.
+  selExp.sort((a, b) => (b.chrono || 0) - (a.chrono || 0) || pool.indexOf(a) - pool.indexOf(b));
+  selProj.sort((a, b) => (b.dateSort || 0) - (a.dateSort || 0) || cmp(a, b));
+
+  // 6. reasons for survivors
+  const reasonFor = (e) => {
+    const { score, tagScore } = scoreOf.get(e.id);
+    if (e.pinned) return 'pinned (always included)';
+    if (e.default) return `default entry (score ${score.toFixed(1)}, ${tagScore} JD tag match${tagScore === 1 ? '' : 'es'})`;
+    return `swapped in on ${tagScore} JD tag match${tagScore === 1 ? '' : 'es'} (score ${score.toFixed(1)})`;
+  };
+  for (const e of [...selExp, ...selProj]) {
+    selected.push({ id: e.id, score: Number(scoreOf.get(e.id).score.toFixed(2)), reason: reasonFor(e) });
+  }
+
+  const json = buildResumeJson(selExp.map(resolveEntryItem), selProj.map(resolveEntryItem));
+  return { json, selected, dropped };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RESUME_BASE_JSON — the DEFAULT resume, assembled by the selector with no JD.
+// Reproduces today's resume except GSPANN is benched and GoodEnough holds its
+// freed slot. Budget is Infinity here because the default set is known to fit one
+// page (that is what BASE_BULLET_CHAR_BUDGET, computed from it below, then means).
+// ─────────────────────────────────────────────────────────────────────────────
+const RESUME_BASE_JSON = selectEntries(ENTRY_POOL, [], '', Infinity).json;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // renderResumeText(json) → plain text
@@ -518,6 +1043,8 @@ module.exports = {
   RESUME_BASE_JSON,
   CANDIDATE_FACTS,
   renderResumeText,
+  SECTION_ORDER,
+  enforceSectionOrder,
   ADJACENCY_MAP,
   applyAdjacency,
   extractUserSkills,
@@ -525,4 +1052,12 @@ module.exports = {
   BASE_BULLET_CHAR_BUDGET,
   SYNONYM_MAP,
   FACT_FRAGMENT_MAP,
+  // 2026-08-05 entry-selection-pool brief
+  ENTRY_POOL,
+  MAX_PROJECT_ENTRIES,
+  MAX_NON_DEFAULT_SWAPS,
+  selectEntries,
+  isValidEntryKind,
+  VALID_ENTRY_KINDS,
+  enforceProjectDateOrder,
 };

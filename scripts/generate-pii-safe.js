@@ -24,7 +24,7 @@ const OUTPUT_PATH = path.resolve(
 
 const PII_SAFE_CONTACT = [
   'Open to relocation',
-  { text: 'sahilmehta.dev', url: 'https://sahilmehta.dev' },
+  { text: 'Portfolio', url: 'https://sahilmehta.dev' },
   { text: 'Github', url: 'https://github.com/sahilmehta17' },
   { text: 'Linkedin', url: 'https://www.linkedin.com/in/sahil-mehta-87357b1b9/' },
 ];

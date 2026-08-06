@@ -51,13 +51,33 @@ GAP_NAME_CONTACT = 18.0
 FONT_NORMAL = "Times-Roman"
 FONT_BOLD   = "Times-Bold"
 FONT_ITALIC = "Times-Italic"
+# Project subsection headers render bold-italic so they are never the same
+# visual token as a bold employer header (2026-08-04 hierarchy brief, Fix 1).
+FONT_BOLD_ITALIC = "Times-BoldItalic"
 FONT_SIZE   = 11.0
+# Project subsection headers sit 0.5pt below body size. Bold-italic plus the
+# smaller size plus the indent below puts them a clear level under an employer.
+SUBSECTION_SIZE = 10.5
 NAME_SIZE   = 16.0
 
 TEXT_WIDTH = PAGE_W - MARGIN_L - MARGIN_R   # 561pt usable
 BULLET_X   = MARGIN_L      # 17pt — bullet dot
 BULLET_TEXT_X = 28.0       # 28pt — bullet text start
 CONTENT_X  = MARGIN_L      # 17pt — regular content
+
+# ── Visual hierarchy (2026-08-04 brief, Fix 1) ───────────────────────────────
+# Mirrors routes/pdfRender.js, which is the production renderer. Kept in sync so
+# this standalone generator does not drift into rendering a different resume.
+#
+# The gap ABOVE an employer block is 2x the gap above a project subsection, so
+# whitespace asymmetry (not a horizontal rule) marks where one employer's work
+# ends and the next begins. INDENT_SUB steps project headers and their bullets
+# in one level; employer headers and bullets that hang directly off an employer
+# stay flush left.
+GAP_EMPLOYER_PRE   = 8.0
+GAP_SUBSECTION_PRE = 4.0
+GAP_POST_ITEM      = 5.0
+INDENT_SUB         = 11.0
 
 SEPARATOR = "_" * 97  # fills full width at 11pt Times-Roman
 
@@ -147,18 +167,30 @@ class ResumeWriter:
         self.advance(LINE_H)
 
     def draw_subsection(self, text):
-        """Subsection title: Times-Bold 11pt, left. 26pt gap above."""
-        self._check_page_break(GAP_SECTION + LINE_H)
-        self.advance(GAP_SECTION - LINE_H)  # extra gap above subsection
-        self._draw_text(CONTENT_X, text, font=FONT_BOLD, size=FONT_SIZE)
+        """
+        Project subsection header (a project under an employer).
+
+        Indented one level, bold-italic at 10.5pt, with a pre-gap half the size
+        of the one an employer block gets. Takes NO date and NO location on
+        purpose: right-aligned date and location are employer-level signals and
+        stay exclusive to draw_job_header.
+        """
+        self._check_page_break(GAP_SUBSECTION_PRE + LINE_H)
+        self.advance(GAP_SUBSECTION_PRE)
+        self._draw_text(CONTENT_X + INDENT_SUB, text,
+                        font=FONT_BOLD_ITALIC, size=SUBSECTION_SIZE)
         self.advance(LINE_H)
 
-    def draw_bullet(self, text):
+    def draw_bullet(self, text, indent=0.0):
         """
         Bullet point: • at x=17, text at x=28, wraps with hanging indent at x=28.
         Times-Roman 11pt.
+
+        `indent` shifts bullets that hang off a project subsection one level in.
+        Bullets that hang directly off an employer (Orahi, GSPANN) pass 0 and
+        stay flush with the employer header above them.
         """
-        max_w = PAGE_W - MARGIN_R - BULLET_TEXT_X
+        max_w = PAGE_W - MARGIN_R - BULLET_TEXT_X - indent
         words = text.split()
         lines = []
         current = []
@@ -178,11 +210,11 @@ class ResumeWriter:
             self._check_page_break(LINE_H)
             if i == 0:
                 self.c.setFont(FONT_NORMAL, FONT_SIZE)
-                self.c.drawString(BULLET_X, self._y_pt(), "\u2022")
-                self.c.drawString(BULLET_TEXT_X, self._y_pt(), line)
+                self.c.drawString(BULLET_X + indent, self._y_pt(), "\u2022")
+                self.c.drawString(BULLET_TEXT_X + indent, self._y_pt(), line)
             else:
                 self.c.setFont(FONT_NORMAL, FONT_SIZE)
-                self.c.drawString(BULLET_TEXT_X, self._y_pt(), line)
+                self.c.drawString(BULLET_TEXT_X + indent, self._y_pt(), line)
             self.advance(LINE_H)
 
     def draw_plain(self, text, font=FONT_NORMAL, right_text=None, right_font=FONT_ITALIC):
@@ -300,15 +332,28 @@ def generate_pdf(content, output_path="Sahil_Mehta_Resume.pdf"):
                 w.draw_plain(item["degree"], right_text=item.get("graduation"), right_font=FONT_ITALIC)
         
         elif stype == "experience":
-            for item in section["items"]:
+            # Asymmetric spacing (Fix 1): the gap goes ABOVE each employer block
+            # and only between blocks, so what separates two employers is one
+            # deliberate GAP_EMPLOYER_PRE rather than the same gap that
+            # separates two projects under the same employer.
+            items = section["items"]
+            for j, item in enumerate(items):
+                if j > 0:
+                    w.advance(GAP_EMPLOYER_PRE)
                 w.draw_job_header(item["title"], date_right=item.get("date"), location_right=item.get("location"))
+                if item.get("role"):
+                    w.draw_plain(item["role"], font=FONT_ITALIC)
                 for sub in item.get("subsections", []):
+                    # A named subsection is a project under this employer, so it
+                    # steps in one level along with its bullets. An unnamed one
+                    # is just the employer's own bullets and stays flush left.
+                    indent = INDENT_SUB if sub.get("name") else 0.0
                     if sub.get("name"):
                         w.draw_subsection(sub["name"])
                     for bullet in sub.get("bullets", []):
-                        w.draw_bullet(bullet)
-                # Gap after each job entry
-                w.advance(GAP_SECTION - LINE_H)
+                        w.draw_bullet(bullet, indent=indent)
+                if j == len(items) - 1:
+                    w.advance(GAP_POST_ITEM)
         
         elif stype == "projects":
             for item in section["items"]:

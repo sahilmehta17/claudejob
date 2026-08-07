@@ -655,9 +655,13 @@ async function defaultCoverIncidentJudge(coverText, candidateFacts) {
 
 SCOPE — read this before anything else:
 - IN SCOPE: any specific incident, event, dated anecdote, named customer, or quantified claim the letter attributes to the CANDIDATE (what they personally did, decided, built, or experienced).
-- OUT OF SCOPE, always PASS regardless of whether it appears in CANDIDATE FACTS: (a) the salutation — who the letter is addressed to, and what company it names, (b) any fact about the TARGET COMPANY itself (its size, scale, product, mission, industry) that isn't a claim about the candidate. You cannot verify these against CANDIDATE FACTS and are not being asked to — do not treat "not in CANDIDATE FACTS" as suspicious for these two categories, and do not flag the letter as a possible template/mismatch on that basis.
+- OUT OF SCOPE, always PASS regardless of whether it appears in CANDIDATE FACTS: (a) the salutation — who the letter is addressed to, and what company it names, (b) any fact about the TARGET COMPANY itself (its size, scale, product, mission, industry) that isn't a claim about the candidate, (c) the candidate's stated openness to RELOCATING to, or working onsite/hybrid at, the role's location. Category (c) is supported as long as CANDIDATE FACTS express general openness to relocation: the candidate may name the JD's own city as a place they would relocate to, because relocation-openness (a candidate fact) applied to the role's location (a target-company fact) is not an invented claim. You cannot verify (a) or (b) against CANDIDATE FACTS and are not being asked to — do not treat "not in CANDIDATE FACTS" as suspicious for these categories, and do not flag the letter as a possible template/mismatch on that basis.
+
+The ONE location thing that IS in scope and DOES fail: the candidate asserting they ALREADY live in, are local to, or already work onsite/hybrid from the role's location when CANDIDATE FACTS place them elsewhere. "Open to relocating to X" PASSES; "I already live in / am based in / am local to X" (where X is not the candidate's stated home) FAILS.
 
 Worked example: "Dear Chen, PlayStation reaches over 100 million people, and that scale is why I'm applying. At Enidus I built an AI copilot with zero hallucination incidents across 15 tenants." → PASS. "Chen" and "PlayStation" are salutation (out of scope). "100 million people" is a target-company fact (out of scope). "zero hallucination incidents across 15 tenants" traces to CANDIDATE FACTS. Nothing here is an invented claim about the candidate.
+
+Worked example (relocation): CANDIDATE FACTS say "based in New York City, open to relocation." Letter says "I'm based in New York and open to relocating to Mountain View for this hybrid role." → PASS. Home city (New York) traces to facts; openness to relocating to the JD's city (Mountain View) is category (c), supported by the general relocation fact. But "I already work hybrid from Mountain View" or "I'm based in the Bay Area" → FAIL (asserts a home/local presence that contradicts the facts).
 
 Return ONLY JSON: {"verdict":"PASS"|"FAIL","reason":"short reason naming the invented detail, or empty string if PASS"}.
 
@@ -1409,6 +1413,8 @@ HARD RULES — violations cause rejection:
 
 DO NOT fabricate any claim, metric, or experience not listed in CANDIDATE FACTS. Do not embellish scope. Do not round numbers.
 
+LOCATION / HYBRID / ONSITE (common fabrication trap): if the JD names a city or requires onsite, hybrid, or in-office work, address it ONLY through the true LOCATION fact above: Sahil is based in New York City and open to relocation. You may state openness to relocating to the role's location. NEVER say or imply he already lives in, near, or is local to that location, or that he can "work hybrid from" it today. Inventing a local presence is a fabrication and will get the letter blocked. If in doubt, do not mention location at all.
+
 REGULATED-DOMAIN NOTE (use only if it fits the narrative — do NOT bolt it on as a separate paragraph):
 If the TARGET company is in financial services, banking, telecom, healthcare, insurance, government, fintech, regtech, or compliance tech, the production-AI-against-regulated-enterprise-data signal is legitimately load-bearing — work it into paragraph 2 as part of the specific moment (e.g., "the dataset was customer billing data, where a hallucinated tool argument means a wrong invoice"). If the TARGET is general-purpose tooling or pure AI research, skip this signal entirely.
 
@@ -1878,9 +1884,13 @@ module.exports.ENABLE_BULLET_KEYWORDS = ENABLE_BULLET_KEYWORDS;
 module.exports.MAX_TAILORED_BULLETS = MAX_TAILORED_BULLETS;
 // Skills lock (Fix 1).
 module.exports.lockSkillsSection = lockSkillsSection;
-// Cover-letter validator (Fix 2).
+// Cover-letter validator (Fix 2). The default judges/regenerator are exported so
+// offline harnesses can drive the SAME enforcement the SSE route uses.
 module.exports.validateCoverLetter = validateCoverLetter;
 module.exports.enforceCoverLetter = enforceCoverLetter;
+module.exports.defaultCoverInversionJudge = defaultCoverInversionJudge;
+module.exports.defaultCoverIncidentJudge = defaultCoverIncidentJudge;
+module.exports.defaultCoverRegenerate = defaultCoverRegenerate;
 // Length-fit enforcement (2026-07-30 brief).
 module.exports.enforceBulletLength = enforceBulletLength;
 module.exports.needsNarrativeRewrite = needsNarrativeRewrite;

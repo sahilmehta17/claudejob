@@ -26,6 +26,8 @@ const {
   enforceProjectDateOrder,
 } = require('../routes/resumeContent');
 
+const { CANDIDATE_FACTS } = require('../routes/resumeContent');
+
 const GOLDEN = require('./fixtures/todays-resume.golden.json');
 
 let passed = 0, failed = 0;
@@ -137,6 +139,19 @@ test('name / contact / education / summary are byte-identical to today', () => {
   assert.deepStrictEqual(RESUME_BASE_JSON.contact, GOLDEN.contact);
   assert.deepStrictEqual(RESUME_BASE_JSON.summary, GOLDEN.summary);
   assert.deepStrictEqual(sec(RESUME_BASE_JSON, 'education'), sec(GOLDEN, 'education'));
+});
+
+test('CANDIDATE_FACTS carries the true location + relocation stance (prevents cover-letter location fabrication)', () => {
+  // Root cause of blocked cover letters on located/hybrid JDs: the cover-letter
+  // LLM sees only CANDIDATE_FACTS, which lacked location, so it invented local
+  // presence and the fabrication guard blocked the letter. The location fact must
+  // trace to the resume contact line and cover both the city and relocation.
+  assert.ok(/new york city/i.test(CANDIDATE_FACTS), 'CANDIDATE_FACTS must state the city');
+  assert.ok(/open to relocation|relocat/i.test(CANDIDATE_FACTS), 'CANDIDATE_FACTS must state relocation openness');
+  // Tie to the resume contact so the two never drift.
+  const contactCity = String((RESUME_BASE_JSON.contact || [])[0] || '').split(/[,·]/)[0].trim();
+  assert.ok(contactCity && CANDIDATE_FACTS.includes(contactCity),
+    `contact city "${contactCity}" must appear in CANDIDATE_FACTS`);
 });
 
 test('LinkedIn URL is intact (identity lock, no fabrication)', () => {

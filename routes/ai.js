@@ -536,9 +536,21 @@ async function validateCoverLetter(coverText, candidateFacts, baseJson, jd, opts
   // claim would be.
   for (const field of [jd && jd.company, jd && jd.title]) {
     if (!field) continue;
-    for (const w of String(field).split(/\s+/)) {
-      const n = normWord(w);
-      if (n) allowSet.add(n);
+    const words = String(field).split(/\s+/).map(normWord).filter(Boolean);
+    for (const n of words) allowSet.add(n);
+    // Also allow the standard INITIALISMS of contiguous title/company word runs
+    // ("Applied Machine Learning" -> aml, "Machine Learning" -> ml, "Site
+    // Reliability Engineer" -> sre). The letter must be able to call the role's
+    // own domain by its everyday abbreviation; the ALLCAPS-acronym extractor
+    // otherwise flags it as fabrication (2026-08-09 ByteDance AML block). This
+    // stays narrow: only abbreviations DERIVED FROM the JD's own words are
+    // allowed, so stack terms the JD names (Golang, K8s) still hit the backstop.
+    const letters = words.map(w => (/^[a-z]/.test(w) ? w[0] : '')).map(c => c || ' ');
+    for (let i = 0; i < words.length; i++) {
+      for (let len = 2; len <= 4 && i + len <= words.length; len++) {
+        const initialism = letters.slice(i, i + len).join('');
+        if (initialism.length === len && /^[a-z]+$/.test(initialism)) allowSet.add(initialism);
+      }
     }
   }
   const flags = [];

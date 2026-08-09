@@ -748,6 +748,28 @@ atest('validateCoverLetter: a clean letter passes capability injection', async (
     'clean letter should not flag injection: ' + JSON.stringify(res.flags));
 });
 
+// Regression (2026-08-09 ByteDance block): a letter for a role literally named
+// "Applied Machine Learning" must be allowed to call that domain "ML" / "AML".
+// Title WORDS were allowlisted but their standard initialisms were not, so the
+// ALLCAPS-acronym extractor flagged "ml"/"aml" as fabrication and the letter
+// was blocked after one failed regeneration.
+const AML_JD = { title: 'Software Engineer - Applied Machine Learning, Engine', company: 'ByteDance', tags: ['Python'], desc: 'AML team.' };
+
+atest('validateCoverLetter: JD-title initialisms (ML, AML) are not injection', async () => {
+  const letter = 'Dear ByteDance team, The AML team runs distributed recommendation systems, and applied ML at that scale is engineering I want to do. At Enidus I shipped a multi-tenant AI copilot. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, AML_JD);
+  const bad = res.flags.filter(f => f.check === 'injection' && (f.term === 'ml' || f.term === 'aml'));
+  assert.strictEqual(bad.length, 0,
+    'JD-title initialisms must be traceable: ' + JSON.stringify(res.flags));
+});
+
+atest('validateCoverLetter: initialism allowance does NOT weaken the stack backstop (Golang still flags)', async () => {
+  const letter = 'Dear ByteDance team, I am fluent in Golang and run the AML stack daily. Best,\nSahil Mehta';
+  const res = await validateCoverLetter(letter, CANDIDATE_FACTS, RESUME_BASE_JSON, AML_JD);
+  assert.ok(res.flags.some(f => f.check === 'injection' && f.term === 'golang'),
+    'golang must still flag: ' + JSON.stringify(res.flags));
+});
+
 atest('validateCoverLetter: flags a reversed routing story (inversion judge)', async () => {
   const letter = 'Dear team, I inverted routing from vector-first to lexical-first as we scaled. Best,\nSahil Mehta';
   const judge = async () => ({ verdict: 'FAIL', reason: 'reversed lexical/vector-first' });

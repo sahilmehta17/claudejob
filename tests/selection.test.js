@@ -27,6 +27,7 @@ const {
 } = require('../routes/resumeContent');
 
 const { CANDIDATE_FACTS } = require('../routes/resumeContent');
+const { measureResumeHeight } = require('../routes/pdfRender');
 
 const GOLDEN = require('./fixtures/todays-resume.golden.json');
 
@@ -349,6 +350,31 @@ test('at most MAX_NON_DEFAULT_SWAPS non-default entries swapped in per run', () 
   const swapIns = selected.filter(s => !defaultIds.has(s.id));
   assert.ok(swapIns.length <= MAX_NON_DEFAULT_SWAPS,
     'too many swaps: ' + swapIns.map(s => s.id).join(', '));
+});
+
+test('selected resume renders to EXACTLY one page for every JD shape (header-aware fit)', () => {
+  // Regression: the char budget counts only bullet chars and is blind to entry
+  // HEADER height, so an ML JD that swapped GSPANN into experience while keeping
+  // three projects (six headers) rendered to two pages and the pipeline fell back
+  // to BASE. The selector now measures the real layout. Guard it here.
+  const BYTEDANCE_ML = {
+    skills: ['Python', 'PyTorch', 'AWS', 'Kafka', 'Docker', 'SQL', 'REST APIs', 'gRPC',
+      'Golang', 'Distributed Systems', 'MySQL', 'Redis', 'Clickhouse', 'Terraform',
+      'Kubernetes', 'TensorFlow', 'MXNet', 'PaddlePaddle', 'DevOps', 'Azure', 'AliCloud'],
+    text: 'applied machine learning distributed recommendation systems efficiency tools model training pipeline distributed systems',
+  };
+  const allTags = ENTRY_POOL.flatMap(e => e.tags || []);
+  const jds = [
+    { skills: [], text: '' }, // default (no JD)
+    RAG_JD, ML_JD, BACKEND_JD, BYTEDANCE_ML,
+    { skills: allTags, text: allTags.join(' ') },
+  ];
+  for (const jd of jds) {
+    const { json } = selectEntries(ENTRY_POOL, jd.skills, jd.text, BASE_BULLET_CHAR_BUDGET);
+    const m = measureResumeHeight(json);
+    assert.strictEqual(m.pages, 1,
+      `selection rendered ${m.pages} pages for JD "${(jd.text || 'default').slice(0, 40)}"`);
+  }
 });
 
 test('selection never exceeds the char budget on the three JD shapes', () => {

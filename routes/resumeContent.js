@@ -106,6 +106,12 @@ const MAX_NON_DEFAULT_SWAPS = 2;
 // match (integer score >= 1) always beats a default matching nothing.
 const DEFAULT_BONUS = 0.1;
 
+// Vertical slack (points) the real one-page fit pass reserves on per-JD runs, so
+// the adjacency skill(s) the pipeline appends after selection (which can wrap the
+// skills block by a line) do not tip a just-barely-fitting base onto page two.
+// About one line of 13pt leading. Not applied to the default (no-JD) build.
+const ONE_PAGE_SLACK_PT = 18;
+
 // Part 4: leave the door open for a Publications section later without a schema
 // change. `publication` is a permitted kind; nothing renders it today.
 const VALID_ENTRY_KINDS = ['experience', 'project', 'publication'];
@@ -677,20 +683,57 @@ function selectEntries(pool, jdRequiredSkills = [], jdText = '', budget = BASE_B
   const totalChars = () =>
     selExp.reduce((n, e) => n + entryBulletChars(e), 0) +
     selProj.reduce((n, e) => n + entryBulletChars(e), 0);
-  while (totalChars() > budget) {
+  // Shared drop order: lowest score first; on a tie drop a project before an
+  // experience entry (experience is the more valuable section); then the
+  // newest/weakest (later in the pool). Pinned entries (Enidus) are never dropped.
+  const nextVictim = () => {
     const droppable = [...selExp, ...selProj].filter(e => !e.pinned);
-    if (droppable.length === 0) break;
+    if (droppable.length === 0) return null;
     droppable.sort((a, b) => {
       const sa = scoreOf.get(a.id).score, sb = scoreOf.get(b.id).score;
-      if (sa !== sb) return sa - sb; // lowest score first
+      if (sa !== sb) return sa - sb;
       const ak = a.kind === 'project' ? 0 : 1, bk = b.kind === 'project' ? 0 : 1;
-      if (ak !== bk) return ak - bk; // drop a project before an experience entry
-      return pool.indexOf(b) - pool.indexOf(a); // newest/weakest first
+      if (ak !== bk) return ak - bk;
+      return pool.indexOf(b) - pool.indexOf(a);
     });
-    const victim = droppable[0];
+    return droppable[0];
+  };
+  const dropEntry = (victim, reason) => {
     selExp = selExp.filter(e => e.id !== victim.id);
     selProj = selProj.filter(e => e.id !== victim.id);
-    dropped.push({ id: victim.id, reason: `dropped to meet the ${budget}-char one-page budget` });
+    dropped.push({ id: victim.id, reason });
+  };
+
+  // 4a. char-budget pass (cheap proxy: keeps a high-scoring swap-in and yields a
+  // JD-irrelevant default instead).
+  while (totalChars() > budget) {
+    const victim = nextVictim();
+    if (!victim) break;
+    dropEntry(victim, `dropped to meet the ${budget}-char one-page budget`);
+  }
+
+  // 4b. real one-page fit pass. The char budget counts only bullet characters and
+  // is blind to per-entry HEADER height, so a selection can pass 4a yet render to
+  // two pages (e.g. an ML JD that swaps an extra experience entry in while keeping
+  // three projects: six headers). Ask the actual renderer how many pages the
+  // assembled resume takes and drop the lowest-value entry until it truly fits,
+  // reserving a little slack on JD runs for the adjacency skill(s) the pipeline
+  // appends downstream. Lazy require avoids a load-time cycle (pdfRender pulls in
+  // this module only at render time).
+  let measureResumeHeight = null;
+  try { ({ measureResumeHeight } = require('./pdfRender')); } catch (_) { /* optional */ }
+  if (typeof measureResumeHeight === 'function') {
+    const slackPt = haystack.trim().length > 0 ? ONE_PAGE_SLACK_PT : 0;
+    const fitsOnePage = () => {
+      const j = buildResumeJson(selExp.map(resolveEntryItem), selProj.map(resolveEntryItem));
+      const m = measureResumeHeight(j);
+      return m.pages <= 1 && (m.usable - m.used) >= slackPt;
+    };
+    while (!fitsOnePage()) {
+      const victim = nextVictim();
+      if (!victim) break;
+      dropEntry(victim, 'dropped so the resume fits one rendered page (entry-header height, not just bullet chars)');
+    }
   }
 
   // 5. ordering. Both sections render newest-first by date (resume convention),

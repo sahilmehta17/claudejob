@@ -1,4 +1,4 @@
-# JobFlow v2.2 — AI Job Application Workflow
+# ClaudeJob: AI Job Application Workflow
 
 AI-powered job search and application workflow. Fetches **live** job listings
 from Google for Jobs (via JSearch API), runs a full AI pipeline
@@ -10,7 +10,6 @@ fill out and submit forms yourself.
 
 ## Setup (one-time)
 ```bash
-cd ClaudeJob/files
 npm install
 pip3 install reportlab pdfplumber   # optional: PDF resume generation
 cp .env.example .env
@@ -40,7 +39,8 @@ npm run dev
 ## Run tests
 ```bash
 npm test
-# Runs 30 unit tests for resume validation, diff, JSON parsing
+# Runs 149 unit tests: 104 for resume validation, diff, and JSON parsing,
+# plus 45 for job selection
 ```
 
 ## What each tab does

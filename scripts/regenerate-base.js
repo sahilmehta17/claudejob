@@ -13,16 +13,16 @@
 const fs = require('fs');
 const path = require('path');
 
-const { RESUME_BASE_JSON } = require('./routes/resumeContent');
-const { renderResumePdf } = require('./routes/pdfRender');
-const { renderResumeDocx } = require('./routes/docxRender');
+const { RESUME_BASE_JSON } = require('../routes/resumeContent');
+const { renderResumePdf } = require('../routes/pdfRender');
+const { renderResumeDocx } = require('../routes/docxRender');
 
 async function main() {
-  // Default output: ../../JobApplications/_BASE_PREVIEW relative to this file.
-  // Layout is: Internships and Resume/{ClaudeJob/files, JobApplications, Portfolio}
-  // so going up two from this script lands on "Internships and Resume".
-  const here = __dirname; // .../ClaudeJob/files
-  const root = path.resolve(here, '..', '..'); // .../Internships and Resume
+  // Default output: JobApplications/_BASE_PREVIEW in the directory that holds this
+  // repo. Layout is: <workspace>/{claudejob, JobApplications, Portfolio}, so going
+  // up two from scripts/ lands on <workspace>.
+  const here = __dirname; // .../claudejob/scripts
+  const root = path.resolve(here, '..', '..'); // .../<workspace>
   const defaultOut = path.join(root, 'JobApplications', '_BASE_PREVIEW');
   const outDir = process.argv[2] || defaultOut;
   fs.mkdirSync(outDir, { recursive: true });

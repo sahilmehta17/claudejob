@@ -4,7 +4,7 @@
 // Overwrites the Sahil_Mehta_Resume.pdf in the May-16 CookUnity folder.
 // Leaves the cover letter alone (it already has chef-drop-brief).
 //
-// Run from ClaudeJob/files: node scripts/regenerate_cookunity.js
+// Run from the repo root: node scripts/regenerate_cookunity.js
 
 require('dotenv').config();
 const fs = require('fs/promises');
